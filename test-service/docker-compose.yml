@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  test-service:
+    build: .
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    environment:
+      - PORT=8080
+      - DATABASE_URL=postgres://user:password@postgres:5432/test-service_db?sslmode=disable
+      - LOG_LEVEL=info
+    depends_on:
+      - postgres
+    networks:
+      - test-service_network
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=test-service_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    networks:
+      - test-service_network
+
+  migrate:
+    image: migrate/migrate
+    networks:
+      - test-service_network
+    volumes:
+      - ./migrations:/migrations
+    command: [
+      "-path", "/migrations",
+      "-database", "postgres://user:password@postgres:5432/test-service_db?sslmode=disable",
+      "up"
+    ]
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+
+networks:
+  test-service_network:
+    driver: bridge

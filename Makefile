@@ -5,8 +5,5 @@ APP_NAME=sunny
 build:
 	go build -o bin/$(APP_NAME) ./cmd
 
-run: build
-	./bin/$(APP_NAME)
-
 clean:
 	rm -rf bin/

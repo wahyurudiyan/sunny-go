@@ -15,7 +15,7 @@ var generateCmd = &cobra.Command{
 	Long: `Generate various components for your Go application:
 
 - contract proto <service_name>: Generate protobuf contract
-- api <service_name>: Generate API files from proto
+- api <service_name>: Generate API files from proto (generates .pb.go, _grpc.pb.go, _http.pb.go)
 - service <service_name>: Generate service files from proto
 
 Examples:

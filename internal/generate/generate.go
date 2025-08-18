@@ -1,12 +1,40 @@
 package generate
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
 )
+
+// getModulePath reads the module path from go.mod file
+func getModulePath() (string, error) {
+	file, err := os.Open("go.mod")
+	if err != nil {
+		return "", fmt.Errorf("go.mod file not found: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "module ") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				return parts[1], nil
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("error reading go.mod: %w", err)
+	}
+
+	return "", fmt.Errorf("module declaration not found in go.mod")
+}
 
 // HTTPFramework represents the supported HTTP frameworks
 type HTTPFramework string
@@ -42,7 +70,7 @@ func GenerateProtoContract(serviceName string) error {
 
 	// Generate proto file
 	protoPath := filepath.Join(contractDir, serviceName+".proto")
-	if err := generateFileFromTemplate(protoPath, protoTemplate, config); err != nil {
+	if err := generateFileFromTemplate(protoPath, ProtoTemplate, config); err != nil {
 		return fmt.Errorf("failed to generate proto file: %w", err)
 	}
 
@@ -54,7 +82,7 @@ func GenerateProtoContract(serviceName string) error {
 	return nil
 }
 
-// GenerateAPI generates API files from proto
+// GenerateAPI generates API files from proto and service files if they don't exist
 func GenerateAPI(serviceName string) error {
 	if err := validateServiceName(serviceName); err != nil {
 		return err
@@ -72,12 +100,45 @@ func GenerateAPI(serviceName string) error {
 		return fmt.Errorf("failed to create API directory: %w", err)
 	}
 
-	// Generate API files using protoc
+	// Generate API files using simple templates
 	if err := generateAPIFiles(serviceName, protoPath, apiDir); err != nil {
 		return fmt.Errorf("failed to generate API files: %w", err)
 	}
 
 	fmt.Printf("✅ Successfully generated API files in: %s\n", apiDir)
+
+	// Check if service files exist, if not generate them automatically
+	serviceDir := filepath.Join("internal", "service", serviceName)
+	serviceFile := filepath.Join(serviceDir, serviceName+".go")
+
+	if _, err := os.Stat(serviceFile); os.IsNotExist(err) {
+		fmt.Printf("🔄 Service files don't exist, generating them automatically...\n")
+
+		// Create service directory
+		if err := os.MkdirAll(serviceDir, 0755); err != nil {
+			return fmt.Errorf("failed to create service directory: %w", err)
+		}
+
+		// Get module path from go.mod
+		modulePath, err := getModulePath()
+		if err != nil {
+			fmt.Printf("⚠️ Warning: Could not get module path, service files may need manual adjustment: %v\n", err)
+			modulePath = "your-module-path"
+		}
+
+		config := &GenerateConfig{
+			ServiceName: serviceName,
+			ModulePath:  modulePath,
+		}
+
+		// Generate service files
+		if err := generateServiceFiles(serviceName, serviceDir, config); err != nil {
+			fmt.Printf("⚠️ Warning: Failed to generate service files: %v\n", err)
+		} else {
+			fmt.Printf("✅ Successfully generated service files in: %s\n", serviceDir)
+		}
+	}
+
 	return nil
 }
 
@@ -99,8 +160,15 @@ func GenerateService(serviceName string) error {
 		return fmt.Errorf("failed to create service directory: %w", err)
 	}
 
+	// Get module path from go.mod
+	modulePath, err := getModulePath()
+	if err != nil {
+		return fmt.Errorf("failed to get module path: %w", err)
+	}
+
 	config := &GenerateConfig{
 		ServiceName: serviceName,
+		ModulePath:  modulePath,
 	}
 
 	// Generate service files
@@ -109,6 +177,81 @@ func GenerateService(serviceName string) error {
 	}
 
 	fmt.Printf("✅ Successfully generated service files in: %s\n", serviceDir)
+	return nil
+}
+
+// ListServices lists all available services based on proto files
+func ListServices() error {
+	protoDir := filepath.Join("api", "contract", "proto")
+
+	if _, err := os.Stat(protoDir); os.IsNotExist(err) {
+		fmt.Println("No proto directory found. Use 'sunny generate contract proto <service_name>' to create services.")
+		return nil
+	}
+
+	files, err := os.ReadDir(protoDir)
+	if err != nil {
+		return fmt.Errorf("failed to read proto directory: %w", err)
+	}
+
+	var services []string
+	for _, file := range files {
+		if !file.IsDir() && strings.HasSuffix(file.Name(), ".proto") {
+			serviceName := strings.TrimSuffix(file.Name(), ".proto")
+			services = append(services, serviceName)
+		}
+	}
+
+	if len(services) == 0 {
+		fmt.Println("No services found. Use 'sunny generate contract proto <service_name>' to create services.")
+		return nil
+	}
+
+	fmt.Println("Available services:")
+	for _, service := range services {
+		fmt.Printf("  - %s\n", service)
+
+		// Check if API files exist
+		apiDir := filepath.Join("api", service)
+		if _, err := os.Stat(apiDir); err == nil {
+			fmt.Printf("    ✅ API files generated\n")
+		} else {
+			fmt.Printf("    ❌ API files not generated (run: sunny generate api %s)\n", service)
+		}
+
+		// Check if service files exist
+		serviceDir := filepath.Join("internal", "service", service)
+		if _, err := os.Stat(serviceDir); err == nil {
+			fmt.Printf("    ✅ Service files generated\n")
+		} else {
+			fmt.Printf("    ❌ Service files not generated (run: sunny generate service %s)\n", service)
+		}
+	}
+
+	return nil
+}
+
+// ValidateProto validates a proto file
+func ValidateProto(protoPath string) error {
+	if protoPath == "" {
+		return fmt.Errorf("proto path cannot be empty")
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(protoPath); os.IsNotExist(err) {
+		return fmt.Errorf("proto file not found: %s", protoPath)
+	}
+
+	// Use protoc to validate the proto file
+	cmd := exec.Command("protoc", "--proto_path=.", "--descriptor_set_out=/dev/null", protoPath)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("Validation errors:\n%s\n", string(output))
+		return fmt.Errorf("proto validation failed: %w", err)
+	}
+
+	fmt.Printf("✅ Proto file %s is valid\n", protoPath)
 	return nil
 }
 
@@ -139,6 +282,9 @@ func generateFileFromTemplate(filePath, templateContent string, config *Generate
 			}
 			return strings.ToUpper(s[:1]) + s[1:]
 		},
+		"lower": func(s string) string {
+			return strings.ToLower(s)
+		},
 	}
 
 	tmpl, err := template.New(filepath.Base(filePath)).Funcs(funcMap).Parse(templateContent)
@@ -159,32 +305,11 @@ func generateFileFromTemplate(filePath, templateContent string, config *Generate
 	return nil
 }
 
-// generateAPIFiles generates API files using protoc
-func generateAPIFiles(serviceName, protoPath, apiDir string) error {
-	// This will be implemented to call protoc commands
-	// For now, create placeholder files
-
-	files := map[string]string{
-		serviceName + ".pb.go":      "// Generated protobuf code will be here\npackage " + serviceName + "\n",
-		serviceName + "_http.pb.go": "// Generated HTTP gateway code will be here\npackage " + serviceName + "\n",
-		serviceName + "_grpc.pb.go": "// Generated gRPC code will be here\npackage " + serviceName + "\n",
-	}
-
-	for fileName, content := range files {
-		filePath := filepath.Join(apiDir, fileName)
-		if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-			return fmt.Errorf("failed to create %s: %w", fileName, err)
-		}
-	}
-
-	return nil
-}
-
 // generateServiceFiles generates service implementation files
 func generateServiceFiles(serviceName, serviceDir string, config *GenerateConfig) error {
 	files := map[string]string{
-		serviceName + ".go":      serviceTemplate,
-		serviceName + "_test.go": serviceTestTemplate,
+		serviceName + ".go":      ServiceTemplate,
+		serviceName + "_test.go": ServiceTestTemplate,
 	}
 
 	for fileName, templateContent := range files {
@@ -196,237 +321,3 @@ func generateServiceFiles(serviceName, serviceDir string, config *GenerateConfig
 
 	return nil
 }
-
-// Template definitions
-const protoTemplate = `syntax = "proto3";
-
-package {{.ServiceName}};
-
-option go_package = "github.com/yourorg/{{.ServiceName}}/api/{{.ServiceName}}";
-
-import "google/api/annotations.proto";
-import "google/protobuf/empty.proto";
-import "google/protobuf/timestamp.proto";
-
-// {{.ServiceName | title}} service definition
-service {{.ServiceName | title}}Service {
-  // Create a new {{.ServiceName}}
-  rpc Create{{.ServiceName | title}}(Create{{.ServiceName | title}}Request) returns ({{.ServiceName | title}}Response) {
-    option (google.api.http) = {
-      post: "/api/v1/{{.ServiceName}}s"
-      body: "*"
-    };
-  }
-
-  // Get a {{.ServiceName}} by ID
-  rpc Get{{.ServiceName | title}}(Get{{.ServiceName | title}}Request) returns ({{.ServiceName | title}}Response) {
-    option (google.api.http) = {
-      get: "/api/v1/{{.ServiceName}}s/{id}"
-    };
-  }
-
-  // List {{.ServiceName}}s
-  rpc List{{.ServiceName | title}}s(List{{.ServiceName | title}}sRequest) returns (List{{.ServiceName | title}}sResponse) {
-    option (google.api.http) = {
-      get: "/api/v1/{{.ServiceName}}s"
-    };
-  }
-
-  // Update a {{.ServiceName}}
-  rpc Update{{.ServiceName | title}}(Update{{.ServiceName | title}}Request) returns ({{.ServiceName | title}}Response) {
-    option (google.api.http) = {
-      put: "/api/v1/{{.ServiceName}}s/{id}"
-      body: "*"
-    };
-  }
-
-  // Delete a {{.ServiceName}}
-  rpc Delete{{.ServiceName | title}}(Delete{{.ServiceName | title}}Request) returns (google.protobuf.Empty) {
-    option (google.api.http) = {
-      delete: "/api/v1/{{.ServiceName}}s/{id}"
-    };
-  }
-}
-
-// {{.ServiceName | title}} message
-message {{.ServiceName | title}} {
-  string id = 1;
-  string name = 2;
-  string description = 3;
-  google.protobuf.Timestamp created_at = 4;
-  google.protobuf.Timestamp updated_at = 5;
-}
-
-// Request messages
-message Create{{.ServiceName | title}}Request {
-  string name = 1;
-  string description = 2;
-}
-
-message Get{{.ServiceName | title}}Request {
-  string id = 1;
-}
-
-message List{{.ServiceName | title}}sRequest {
-  int32 page = 1;
-  int32 page_size = 2;
-}
-
-message Update{{.ServiceName | title}}Request {
-  string id = 1;
-  string name = 2;
-  string description = 3;
-}
-
-message Delete{{.ServiceName | title}}Request {
-  string id = 1;
-}
-
-// Response messages
-message {{.ServiceName | title}}Response {
-  {{.ServiceName | title}} {{.ServiceName}} = 1;
-}
-
-message List{{.ServiceName | title}}sResponse {
-  repeated {{.ServiceName | title}} {{.ServiceName}}s = 1;
-  int32 total = 2;
-  int32 page = 3;
-  int32 page_size = 4;
-}`
-
-const serviceTemplate = `package {{.ServiceName}}
-
-import (
-	"context"
-	"fmt"
-
-	"go.uber.org/fx"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-)
-
-// Service represents the {{.ServiceName}} service
-type Service struct {
-	// Add your dependencies here
-}
-
-// ServiceParams defines the dependencies for the service
-type ServiceParams struct {
-	fx.In
-	// Add your dependencies here
-}
-
-// New creates a new {{.ServiceName}} service
-func New(params ServiceParams) *Service {
-	return &Service{
-		// Initialize dependencies
-	}
-}
-
-// Create{{.ServiceName | title}} creates a new {{.ServiceName}}
-func (s *Service) Create{{.ServiceName | title}}(ctx context.Context, req *Create{{.ServiceName | title}}Request) (*{{.ServiceName | title}}Response, error) {
-	// TODO: Implement create logic
-	return nil, status.Error(codes.Unimplemented, "method not implemented")
-}
-
-// Get{{.ServiceName | title}} retrieves a {{.ServiceName}} by ID
-func (s *Service) Get{{.ServiceName | title}}(ctx context.Context, req *Get{{.ServiceName | title}}Request) (*{{.ServiceName | title}}Response, error) {
-	// TODO: Implement get logic
-	return nil, status.Error(codes.Unimplemented, "method not implemented")
-}
-
-// List{{.ServiceName | title}}s lists {{.ServiceName}}s
-func (s *Service) List{{.ServiceName | title}}s(ctx context.Context, req *List{{.ServiceName | title}}sRequest) (*List{{.ServiceName | title}}sResponse, error) {
-	// TODO: Implement list logic
-	return nil, status.Error(codes.Unimplemented, "method not implemented")
-}
-
-// Update{{.ServiceName | title}} updates a {{.ServiceName}}
-func (s *Service) Update{{.ServiceName | title}}(ctx context.Context, req *Update{{.ServiceName | title}}Request) (*{{.ServiceName | title}}Response, error) {
-	// TODO: Implement update logic
-	return nil, status.Error(codes.Unimplemented, "method not implemented")
-}
-
-// Delete{{.ServiceName | title}} deletes a {{.ServiceName}}
-func (s *Service) Delete{{.ServiceName | title}}(ctx context.Context, req *Delete{{.ServiceName | title}}Request) (*emptypb.Empty, error) {
-	// TODO: Implement delete logic
-	return nil, status.Error(codes.Unimplemented, "method not implemented")
-}`
-
-const serviceTestTemplate = `package {{.ServiceName}}
-
-import (
-	"context"
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-)
-
-func TestService_Create{{.ServiceName | title}}(t *testing.T) {
-	service := &Service{}
-	
-	req := &Create{{.ServiceName | title}}Request{
-		Name:        "Test {{.ServiceName | title}}",
-		Description: "Test Description",
-	}
-
-	_, err := service.Create{{.ServiceName | title}}(context.Background(), req)
-	
-	// For now, expect unimplemented error
-	assert.Error(t, err)
-}
-
-func TestService_Get{{.ServiceName | title}}(t *testing.T) {
-	service := &Service{}
-	
-	req := &Get{{.ServiceName | title}}Request{
-		Id: "test-id",
-	}
-
-	_, err := service.Get{{.ServiceName | title}}(context.Background(), req)
-	
-	// For now, expect unimplemented error
-	assert.Error(t, err)
-}
-
-func TestService_List{{.ServiceName | title}}s(t *testing.T) {
-	service := &Service{}
-	
-	req := &List{{.ServiceName | title}}sRequest{
-		Page:     1,
-		PageSize: 10,
-	}
-
-	_, err := service.List{{.ServiceName | title}}s(context.Background(), req)
-	
-	// For now, expect unimplemented error
-	assert.Error(t, err)
-}
-
-func TestService_Update{{.ServiceName | title}}(t *testing.T) {
-	service := &Service{}
-	
-	req := &Update{{.ServiceName | title}}Request{
-		Id:          "test-id",
-		Name:        "Updated {{.ServiceName | title}}",
-		Description: "Updated Description",
-	}
-
-	_, err := service.Update{{.ServiceName | title}}(context.Background(), req)
-	
-	// For now, expect unimplemented error
-	assert.Error(t, err)
-}
-
-func TestService_Delete{{.ServiceName | title}}(t *testing.T) {
-	service := &Service{}
-	
-	req := &Delete{{.ServiceName | title}}Request{
-		Id: "test-id",
-	}
-
-	_, err := service.Delete{{.ServiceName | title}}(context.Background(), req)
-	
-	// For now, expect unimplemented error
-	assert.Error(t, err)
-}`

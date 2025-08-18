@@ -1,258 +1,216 @@
 package templates
 
-// Core application templates
-
-// Main application template
+// MainTemplate defines the main.go file template
 const MainTemplate = `package main
 
 import (
-	"context"
+	"log"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
-	"go.uber.org/fx"
-	"go.uber.org/zap"
-
-	"{{.ModulePath}}/internal/config"
-	"{{.ModulePath}}/internal/handler"
-	"{{.ModulePath}}/internal/middleware"
-	"{{.ModulePath}}/internal/repository"
-	"{{.ModulePath}}/internal/service"
-	"{{.ModulePath}}/pkg/database"
-	"{{.ModulePath}}/pkg/logger"
-	"{{.ModulePath}}/server"
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
 )
 
 func main() {
-	app := fx.New(
-		// Configuration
-		fx.Provide(config.Load),
-		
-		// Infrastructure
-		fx.Provide(logger.New),
-		fx.Provide(database.Connect),
-		
-		// Repositories
-		fx.Provide(repository.NewUserRepository),
-		
-		// Services
-		fx.Provide(service.NewUserService),
-		
-		// Handlers
-		fx.Provide(handler.NewUserHandler),
-		
-		// Middleware
-		fx.Provide(middleware.NewAuthMiddleware),
-		fx.Provide(middleware.NewLoggingMiddleware),
-		
-		// Servers
-		fx.Provide(server.NewGRPCServer),
-		fx.Provide(server.NewHTTPServer),
-		
-		// Lifecycle hooks
-		fx.Invoke(registerHooks),
-	)
+	// Create Fiber app
+	app := fiber.New(fiber.Config{
+		AppName: "{{.ProjectName}}",
+	})
 
-	// Handle shutdown gracefully
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	
-	if err := app.Start(ctx); err != nil {
-		os.Exit(1)
+	// Middleware
+	app.Use(cors.New())
+	app.Use(logger.New())
+
+	// Routes
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"message": "Welcome to {{.ProjectName}}!",
+			"status":  "healthy",
+		})
+	})
+
+	app.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status": "ok",
+		})
+	})
+
+	// Get port from environment or use default
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
 	}
 
-	// Wait for interrupt signal
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	// Graceful shutdown
-	if err := app.Stop(ctx); err != nil {
-		os.Exit(1)
+	// Start server
+	log.Printf("🚀 Server starting on port %s", port)
+	if err := app.Listen(":" + port); err != nil {
+		log.Fatalf("Server failed to start: %v", err)
 	}
 }
+`
 
-// registerHooks registers lifecycle hooks for the servers
-func registerHooks(
-	lifecycle fx.Lifecycle,
-	grpcServer *server.GRPCServer,
-	httpServer *server.HTTPServer,
-	logger *zap.Logger,
-) {
-	lifecycle.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			// Start GRPC server
-			go func() {
-				if err := grpcServer.Start(); err != nil {
-					logger.Error("GRPC server failed", zap.Error(err))
-				}
-			}()
-			
-			// Start HTTP server
-			go func() {
-				if err := httpServer.Start(); err != nil {
-					logger.Error("HTTP server failed", zap.Error(err))
-				}
-			}()
-			
-			logger.Info("Servers started successfully")
-			return nil
-		},
-		OnStop: func(ctx context.Context) error {
-			logger.Info("Shutting down servers...")
-			
-			// Stop servers gracefully
-			grpcServer.Stop()
-			httpServer.Stop(ctx)
-			
-			logger.Info("Servers stopped successfully")
-			return nil
-		},
-	})
-}`
-
-// Go module template
-const GoModTemplate = `// Go module template
-const GoModTemplate = ` + "`" + `module {{.ModulePath}}
+// GoModTemplate defines the go.mod file template
+const GoModTemplate = `module {{.ProjectName}}
 
 go 1.21
 
 require (
-	github.com/lib/pq v1.10.9
-	go.uber.org/fx v1.20.0
-	go.uber.org/zap v1.26.0
-	google.golang.org/grpc v1.60.1
-	google.golang.org/protobuf v1.32.0
-	github.com/golang-migrate/migrate/v4 v4.17.0
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.19.0
-	github.com/stretchr/testify v1.8.4
+	github.com/gofiber/fiber/v2 v2.52.0
 )
+`
 
-require (
-	github.com/golang/protobuf v1.5.3 // indirect
-	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/net v0.20.0 // indirect
-	golang.org/x/sys v0.16.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20240125205218-1f4bbc51befe // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240125205218-1f4bbc51befe // indirect
-)` + "`" + `
+// ReadmeTemplate defines the README.md file template
+const ReadmeTemplate = `# {{.ProjectName}}
 
-// README template
-const ReadmeTemplate = ` + "`" + `# {{.ServiceName}}
+A modern Go web service built with Fiber framework.
 
-A gRPC-based microservice built with Go.
-
-## Project Structure
-
-` + "```" + `
-{{.ServiceName}}/
-├── api/                           # Generated API files
-│   ├── contract/proto/            # Protocol buffer definitions
-│   └── <service>/                 # Generated protobuf code
-├── internal/                      # Private application code
-│   ├── models/                    # Data models/entities
-│   ├── repository/                # Data access layer
-│   ├── service/                   # Business logic
-│   ├── handler/                   # gRPC handlers
-│   ├── middleware/                # Interceptors and middleware
-│   └── config/                    # Configuration
-├── server/                        # Server implementations
-│   ├── grpc.go                    # gRPC server
-│   └── http.go                    # HTTP server
-├── pkg/                           # Public packages
-│   ├── database/                  # Database utilities
-│   └── logger/                    # Logging utilities
-├── test/                          # Test infrastructure
-│   ├── mocks/                     # Mock implementations
-│   └── fixtures/                  # Test fixtures and helpers
-├── cmd/                           # Application entry points
-├── migrations/                    # Database migrations
-├── docker-compose.yml             # Local development setup
-├── Dockerfile
-└── Makefile
-` + "```" + `
-
-## Development
+## Quick Start
 
 ### Prerequisites
+- Go 1.21 or higher
 
-- Go 1.21+
-- PostgreSQL
-- Protocol Buffers compiler (protoc)
-- grpc-gateway protoc plugins
-- Docker & Docker Compose
-- Protocol Buffers compiler (protoc)
-- Buf CLI
+### Installation
+` + "`" + `bash
+# Clone the repository
+git clone <your-repo-url>
+cd {{.ProjectName}}
 
-### Setup
+# Install dependencies
+go mod tidy
 
-1. Clone the repository
-2. Install dependencies:
-   ` + "```bash" + `
-   go mod download
-   ` + "```" + `
+# Run the application
+go run main.go
+` + "`" + `
 
-3. Start the database:
-   ` + "```bash" + `
-   docker-compose up -d postgres
-   ` + "```" + `
+### Using Makefile
+` + "`" + `bash
+# Build the application
+make build
 
-4. Run migrations:
-   ` + "```bash" + `
-   make migrate-up
-   ` + "```" + `
+# Run the application
+make run
 
-5. Generate protobuf code:
-   ` + "```bash" + `
-   make proto-gen
-   ` + "```" + `
+# Clean build artifacts
+make clean
+` + "`" + `
 
-6. Start the server:
-   ` + "```bash" + `
-   make run
-   ` + "```" + `
+## API Endpoints
 
-## Available Commands
-
-- ` + "`make build`" + ` - Build the application
-- ` + "`make run`" + ` - Run the application
-- ` + "`make test`" + ` - Run tests
-- ` + "`make proto-gen`" + ` - Generate protobuf code
-- ` + "`make migrate-up`" + ` - Run database migrations
-- ` + "`make migrate-down`" + ` - Rollback database migrations
-- ` + "`make docker-build`" + ` - Build Docker image
-- ` + "`make clean`" + ` - Clean build artifacts
-
-## API Documentation
-
-The service exposes both gRPC and HTTP endpoints via grpc-gateway.
-
-- gRPC: ` + "`localhost:8080`" + `
-- HTTP: ` + "`localhost:8081`" + `
+- ` + "`" + `GET /` + "`" + ` - Welcome message
+- ` + "`" + `GET /health` + "`" + ` - Health check
 
 ## Environment Variables
 
-- ` + "`PORT`" + ` - Server port (default: 8080)
-- ` + "`DATABASE_URL`" + ` - PostgreSQL connection string
-- ` + "`LOG_LEVEL`" + ` - Log level (debug, info, warn, error)
+- ` + "`" + `PORT` + "`" + ` - Server port (default: 3000)
 
-## Testing
+## Development
 
-Run unit tests:
-` + "```bash" + `
-make test
-` + "```" + `
+The application uses:
+- [Fiber](https://gofiber.io/) - Web framework
+- Built-in middleware for CORS and logging
 
-Run tests with coverage:
-` + "```bash" + `
-go test -cover ./...
-` + "```" + `
+## Building
 
-Run integration tests:
-` + "```bash" + `
-go test -tags=integration ./...
-` + "```" + `
-` + "`"
+` + "`" + `bash
+go build -o bin/{{.ProjectName}} main.go
+` + "`" + `
+
+## License
+
+MIT License
+`
+
+// MakefileTemplate defines the Makefile template
+const MakefileTemplate = `.PHONY: build run clean test
+
+# Build the application
+build:
+	go build -o bin/{{.ProjectName}} ./cmd/{{.ProjectName}}
+
+# Run the application
+run:
+	go run ./cmd/{{.ProjectName}}
+
+# Clean build artifacts
+clean:
+	rm -rf bin/
+
+# Run tests
+test:
+	go test -v ./...
+
+# Install dependencies
+deps:
+	go mod tidy
+
+# Development mode with hot reload (requires air)
+dev:
+	air
+
+# Format code
+fmt:
+	go fmt ./...
+
+# Lint code
+lint:
+	golangci-lint run
+`
+
+// GitignoreTemplate defines the .gitignore file template
+const GitignoreTemplate = `# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+
+# Test binary, built with go test -c
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
+logs/
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Air (live reload) temporary files
+tmp/
+`

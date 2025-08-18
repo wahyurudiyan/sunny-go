@@ -24,8 +24,8 @@ Usage:
   sunny [command] --help
 
 Examples:
-  sunny create
-  sunny g proto ./path/to/file.go
+  sunny create my-api
+  sunny g api user
   sunny help
 `,
 }

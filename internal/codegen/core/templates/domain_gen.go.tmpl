@@ -4,7 +4,7 @@ package {{.Package}}
 {{range .Messages}}
 type {{.Name}} struct {
 {{- range .Fields}}
-	{{.GoName}} {{.GoType}}
+	{{.GoName}} {{.GoType}} `json:"{{.Name}}"`
 {{- end}}
 }
 {{end}}

@@ -1,16 +1,21 @@
 // Package codegen orchestrates `sgo generate code`: compiling a proto
 // file and driving every generator in its subpackages (proto, wiregen,
-// core) to produce contract/gen, the hexagonal core, and the mapper for
-// one entity.
+// core, httpgen, grpcgen, memgen, bootstrap) to produce contract/gen,
+// the hexagonal core, the HTTP/gRPC adapters, a runnable in-memory
+// repository, and the composition root for one entity.
 package codegen
 
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/bootstrap"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/core"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/gengo"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/grpcgen"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/httpgen"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/memgen"
 	sgoproto "github.com/wahyurudiyan/sunny-go/internal/codegen/proto"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/wiregen"
 	"github.com/wahyurudiyan/sunny-go/internal/config"
@@ -19,10 +24,12 @@ import (
 // GenerateCode reads projectDir/contract/pb/<name>.proto and (re)generates
 // everything that derives from it: contract/gen, the domain entity, the
 // usecase/repository ports, the service skeleton (safely — see
-// core.GenerateService), and the wire↔domain mapper. It then runs
-// `go mod tidy` in projectDir so the newly imported protobuf/grpc
-// dependencies are picked up, and records name in sgo.yaml's services
-// list.
+// core.GenerateService), the wire↔domain mapper, the HTTP routes for the
+// project's chosen framework, the gRPC server adapter, a default
+// in-memory repository, and the bootstrap composition root (rewired for
+// every service on record, not just this one). It then runs
+// `go mod tidy` in projectDir so newly imported dependencies are picked
+// up, and records name in sgo.yaml's services list.
 func GenerateCode(projectDir, name string, cfg *config.Config) error {
 	protoDir := filepath.Join(projectDir, "contract", "pb")
 	protoRel := name + ".proto"
@@ -63,12 +70,33 @@ func GenerateCode(projectDir, name string, cfg *config.Config) error {
 		return err
 	}
 
+	httpDir := filepath.Join(projectDir, "internal", "adapter", "in", "http", string(cfg.HTTPFramework))
+	if err := httpgen.GenerateServer(cfg.HTTPFramework, httpDir); err != nil {
+		return err
+	}
+	if err := httpgen.GenerateRoutes(cfg.HTTPFramework, file, p, httpDir); err != nil {
+		return err
+	}
+
+	if err := grpcgen.Generate(file, p, filepath.Join(projectDir, "internal", "adapter", "in", "grpc")); err != nil {
+		return err
+	}
+
+	if err := memgen.Generate(p, filepath.Join(projectDir, "internal", "adapter", "out", "persistence", "memory")); err != nil {
+		return err
+	}
+
 	addService(cfg, name)
+
+	if err := bootstrap.Generate(cfg.Module, cfg.HTTPFramework, cfg.Services, filepath.Join(projectDir, "internal", "bootstrap")); err != nil {
+		return err
+	}
+
 	if err := cfg.Save(projectDir); err != nil {
 		return err
 	}
 
-	return tidyModule(projectDir)
+	return gengo.TidyModule(projectDir)
 }
 
 func addService(cfg *config.Config, name string) {
@@ -78,16 +106,4 @@ func addService(cfg *config.Config, name string) {
 		}
 	}
 	cfg.Services = append(cfg.Services, name)
-}
-
-func tidyModule(projectDir string) error {
-	cmd := exec.Command("go", "mod", "tidy")
-	cmd.Dir = projectDir
-
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("go mod tidy failed: %w\n%s", err, out)
-	}
-
-	return nil
 }

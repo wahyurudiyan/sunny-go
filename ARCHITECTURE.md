@@ -86,14 +86,16 @@ myservice/
 │   ├── adapter/
 │   │   ├── in/
 │   │   │   ├── http/
-│   │   │   │   ├── router.go      # framework-agnostic Router interface
 │   │   │   │   └── gin/           # (or echo/, or chi/ — one is chosen)
+│   │   │   │       ├── server_gen.go       # wraps the framework's native engine
 │   │   │   │       └── user_routes_gen.go
 │   │   │   └── grpc/
 │   │   │       └── user_grpc_server_gen.go
 │   │   ├── out/
 │   │   │   ├── persistence/
-│   │   │   │   └── postgres/      # self-managed or ORM impl of the port
+│   │   │   │   ├── memory/        # default until a real engine is selected — see §8.2
+│   │   │   │   │   └── user_repository_gen.go
+│   │   │   │   └── postgres/      # self-managed or ORM impl of the port (Phase 4)
 │   │   │   ├── cache/
 │   │   │   │   └── redis/
 │   │   │   └── search/
@@ -250,35 +252,48 @@ services: [user]            # tracked by `sgo list`
 
 ### 8.1 HTTP framework
 
-```go
-// internal/adapter/in/http/router.go (generated project)
-type Router interface {
-    Handle(method, path string, h HandlerFunc)
-    Group(prefix string) Router
-    Use(mw ...Middleware)
-    Start(addr string) error
-}
-```
-
-Each framework gets its own adapter package (`adapter/in/http/gin`,
-`.../echo`, `.../chi`) implementing `Router`, plus a generated
-`<entity>_routes_gen.go` that registers routes using that framework's
-native API. Inside the `sgo` tool itself, frameworks are registered in
-`internal/registry/http.go`:
+**Revised in Phase 3:** the formal `Router` Go interface originally
+sketched here turned out to be unnecessary. `internal/bootstrap/wire_gen.go`
+is *already* regenerated fresh for whichever framework `sgo.yaml`
+currently selects (see §6's file-split principle — it's `_gen.go`
+content), so it can reference that framework's native type directly
+instead of going through an interface. Each framework's adapter package
+(`adapter/in/http/gin`, `.../echo`, `.../chi` — only the selected one is
+generated) exposes a small `Server` type instead:
 
 ```go
-var httpFrameworks = map[string]HTTPFrameworkPlugin{
-    "gin":  gin.Plugin{},
-    "echo": echo.Plugin{},
-    "chi":  chi.Plugin{},
+// internal/adapter/in/http/gin/server_gen.go (generated project)
+type Server struct {
+    Engine *gin.Engine // Echo: `Echo *echo.Echo`; Chi: `Router chi.Router`
 }
+
+func New() *Server              { ... }
+func (s *Server) Start(addr string) error { ... }
 ```
 
-Adding framework #4 means writing one new plugin package and registering
-it — no change to existing frameworks, the core, or the CLI commands.
-Full framework-syntax abstraction isn't the goal (route registration is
-generated, not shared code); the `Router` interface only needs to cover
-`Start`/`Use`/shutdown so `cmd/.../main.go` stays framework-agnostic.
+`wire_gen.go` calls `httpadapter.New()`, then passes `httpServer.Engine`
+(the framework-native field) to each entity's generated
+`Register<Entity>Routes` function, and later `httpServer.Start(addr)`.
+The field name differs per framework, but since `wire_gen.go` is
+generated code that already knows which framework is active, that's not
+a problem — there's no hand-written call site that would need a common
+interface to stay framework-agnostic.
+
+Inside the `sgo` tool itself, frameworks are registered in
+`internal/codegen/httpgen` as a small map from `config.HTTPFramework` to
+a `{serverTemplate, routesTemplate, idPlaceholder}` triple. Adding
+framework #4 means adding one map entry and its two template files — no
+change to existing frameworks, the core, or the CLI commands.
+
+**Route derivation (no `google.api.http` support yet — see §12):** since
+descriptor-driven HTTP annotations aren't parsed, routes are derived from
+the RPC name prefix `sgo generate proto`'s starter template already
+commits to: `Create*` → `POST /api/v1/<entity>s`, `Get*` → `GET
+.../{id}`, `List*` → `GET ...`, `Update*` → `PUT .../{id}`, `Delete*` →
+`DELETE .../{id}`; anything else falls back to `POST`, keyed by `{id}` if
+the input message has an `Id` field. This lives in
+`internal/codegen/httpgen.BuildRoutes`, shared by all three frameworks —
+only the Go code emitted for a given route differs per framework.
 
 ### 8.2 Persistence: self-managed vs. ORM
 
@@ -290,6 +305,15 @@ generated, not shared code); the `Router` interface only needs to cover
   trying to infer a repository shape from arbitrary RPC naming is more
   fragile than just fixing the convention. The adapters described below
   (self-managed/ORM, per datastore) are Phase 4, not yet built.
+- **In the meantime (Phase 3), every entity gets a generated in-memory
+  implementation** (`internal/adapter/out/persistence/memory/`, a
+  mutex-protected map) wired up by default in `wire_gen.go`, regardless
+  of what `sgo.yaml` selected. This isn't in the original plan — it exists
+  so a freshly generated project is runnable and demoable (real HTTP/gRPC
+  round trips, just without durable storage) before Phase 4's real
+  adapters exist, rather than starting a server with no working
+  persistence at all. Phase 4 replaces this as the default once a real
+  adapter for the selected engine exists.
 - **self-managed**: `database/sql` + `sqlx` (or `pgx` for Postgres) with
   hand-written SQL. Scaffolded once as an owned file with example CRUD
   queries; not regenerated wholesale after that (same rule as §6).
@@ -428,18 +452,31 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
 | 10 | Domain generation includes every message in the proto file, not just the one matching the entity name. | Request/response DTOs need domain-level structs too, for the usecase port's method signatures and the service skeleton — singling out only "the entity" message would leave nowhere for `CreateUserRequest` etc. to live on the domain side. |
 | 11 | The repository port (`out/<entity>_repository.go`) is a fixed `Create/Get/List/Update/Delete` shape, not derived from the proto service's literal RPC names. | Inferring a repository interface from arbitrary RPC naming (is `ArchiveUser` a delete? an update?) is guesswork; a fixed convention is predictable and still fully decoupled from the wire format, which is the property that actually matters for the port. |
 | 12 | Safe regeneration works by parsing the existing file with `go/parser` to find methods by receiver+name, then line-based insertion/append plus one whole-file `gofmt` pass — not full AST rewriting. | Line-based insertion only ever adds text at specific points and never reconstructs code that was already there, which is a much easier property to get right (and trust) than an AST rewrite that reprints the whole file from its tree. |
+| 13 | ~~Formal `Router` Go interface~~ dropped (Phase 3) in favor of each framework's `Server` type exposing its native engine field directly. | `wire_gen.go` is already regenerated fresh per current framework selection, so there's no hand-written call site that needs a common interface to stay framework-agnostic — the interface would have added a layer with no caller that actually needed the abstraction. |
+| 14 | HTTP routes are derived from the RPC name prefix convention (`Create`/`Get`/`List`/`Update`/`Delete`), not `google.api.http` annotations. | Resolves what §12 originally left as an open question for Phase 3, in the direction that keeps the pure-Go, no-external-proto-dependency property from Decision #5 rather than reintroducing `googleapis` vendoring. |
+| 15 | Every entity gets a generated in-memory repository, wired as the default in `wire_gen.go` regardless of `sgo.yaml`'s persistence selection, until Phase 4 provides a real one. | A generated project should be runnable and demoable as soon as a service exists, not only after Phase 4 lands; the in-memory adapter is disposable scaffolding with an obvious, well-flagged replacement point. |
+| 16 | `service`, the chosen HTTP framework's package (`gin`/`echo`/`chi`), `grpcserver`, `memory`, and `mapper` each hold **every** entity's generated files under one shared Go package (one file per entity, e.g. `user_service.go` + `order_service.go` both in `package service`) — only `core/domain/<entity>` is genuinely per-entity-packaged. | Keeps `internal/bootstrap/wire_gen.go`'s imports to one per shared package regardless of how many entities exist, instead of one import alias per entity per layer; entity-prefixed type/function names (`UserRepository`, `RegisterUserRoutes`, ...) already prevent collisions within those shared packages. |
 
 ## 12. Open questions
 
 - ~~**`buf` as a hard prerequisite**~~ — resolved by Decision #5: no
   `buf`/`protoc` prerequisite at all.
-- **`google.api.http` support** — the starter proto template and the
-  descriptor walk don't handle `google.api.http` annotations yet (see
-  §4). Phase 3 (HTTP adapters) needs routes from somewhere: either add
-  proper support for that import (protocompile can resolve it, it just
-  needs the `googleapis` `.proto` files available to the resolver), or
-  derive HTTP routes from the CRUD RPC naming convention the starter
-  template already commits to. Worth deciding before Phase 3 starts.
+- ~~**`google.api.http` support**~~ — resolved by Decision #14 for now:
+  routes come from the CRUD RPC naming convention, not annotations. Real
+  `google.api.http` support (arbitrary custom paths/verbs, path-parameter
+  names other than `id`) is still a possible future upgrade if the
+  convention-based routing proves too rigid, but it's no longer blocking
+  anything.
+- **HTTP route derivation only understands `id` as the path-parameter
+  field name** (`httpgen.hasIDField` checks for a field whose Go name is
+  exactly `Id`). A message using a different key field name won't get a
+  path parameter. Revisit alongside real `google.api.http` support if it
+  comes up.
+- **Query-parameter parsing isn't implemented** — `List*` routes always
+  call the usecase with a zero-value request (no `page`/`page_size` read
+  from the URL query string), so pagination only works if a caller POSTs
+  a body to a list endpoint, which the CRUD convention doesn't route
+  anyway. Worth adding when it's actually needed.
 - **ORM library choice** — GORM assumed above; alternatives (`bun`,
   `sqlc` for a codegen-first approach) weren't ruled out, just not
   selected. Worth revisiting before Phase 4.

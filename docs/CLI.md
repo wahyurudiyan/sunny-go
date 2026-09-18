@@ -69,6 +69,22 @@ Compiles `contract/pb/user.proto` (via a pure-Go compiler — no `buf`/
   RPCs), `internal/core/port/out/user_repository.go` (fixed
   `Create/Get/List/Update/Delete` shape)
 - `internal/adapter/mapper/user_mapper_gen.go` — wire↔domain conversions
+- HTTP route registration for the project's `sgo.yaml`-selected framework
+  (`internal/adapter/in/http/<framework>/user_routes_gen.go` +
+  `server_gen.go`), with routes derived from the RPC naming convention
+  (`Create*`→`POST`, `Get*`→`GET .../{id}`, `List*`→`GET`,
+  `Update*`→`PUT .../{id}`, `Delete*`→`DELETE .../{id}` — no
+  `google.api.http` support yet, see ARCHITECTURE §8.1/§12)
+- A gRPC server adapter
+  (`internal/adapter/in/grpc/user_grpc_server_gen.go`) implementing the
+  real protoc-gen-go-grpc server interface
+- A default in-memory repository
+  (`internal/adapter/out/persistence/memory/user_repository_gen.go`), so
+  the service is runnable before a real persistence adapter exists
+  (Phase 4)
+- `internal/bootstrap/wire_gen.go` — regenerated to wire *every* service
+  on record (not just this one) to the HTTP/gRPC servers and starts both:
+  HTTP on `:8080`, gRPC on `:9090`
 
 ...and **creates, but never overwrites**, the owned files:
 `internal/core/domain/user/user.go`,
@@ -79,21 +95,19 @@ already implemented, that implementation is left in place with a warning
 comment, never deleted — see ARCHITECTURE §6. Safe to run repeatedly:
 covered by an end-to-end Ginkgo suite that edits the proto and asserts a
 hand-written method body survives, twice, with a real `go build` after
-each run.
+each run, plus a separate suite that builds and runs the actual compiled
+binary and drives a full HTTP CRUD cycle against it over real sockets.
 
 Finishes by running `go mod tidy` in the project, so the
 `google.golang.org/protobuf`/`google.golang.org/grpc` dependencies
-`contract/gen` now needs are picked up automatically, and records `user`
-in `sgo.yaml`'s `services` list.
-
-HTTP route registration and gRPC server binding are **not** generated
-yet — that's Phase 3 (see `PLAN.md`).
+`contract/gen` and the adapters now need are picked up automatically, and
+records `user` in `sgo.yaml`'s `services` list.
 
 Supersedes the old `sunny generate contract proto` / `sunny generate
 api` / `sunny generate service` three-step flow — `generate code` is one
-step that does entity + ports + service + mapper together, because they
-all derive from the same proto walk. Unlike the old `sunny generate api`,
-this one actually reads the proto's contents.
+step that does entity + ports + service + mapper + HTTP + gRPC together,
+because they all derive from the same proto walk. Unlike the old `sunny
+generate api`, this one actually reads the proto's contents.
 
 ## `sgo list services` ✅
 

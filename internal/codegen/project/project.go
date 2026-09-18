@@ -11,6 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/bootstrap"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/gengo"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/httpgen"
 	"github.com/wahyurudiyan/sunny-go/internal/config"
 	sgotemplate "github.com/wahyurudiyan/sunny-go/internal/template"
 )
@@ -66,6 +69,16 @@ func Scaffold(destDir string, opts Options) error {
 		return err
 	}
 
+	httpDir := filepath.Join(destDir, "internal", "adapter", "in", "http", string(opts.HTTPFramework))
+	if err := httpgen.GenerateServer(opts.HTTPFramework, httpDir); err != nil {
+		return fmt.Errorf("failed to generate HTTP server boilerplate: %w", err)
+	}
+
+	bootstrapDir := filepath.Join(destDir, "internal", "bootstrap")
+	if err := bootstrap.Generate(opts.Module, opts.HTTPFramework, nil, bootstrapDir); err != nil {
+		return fmt.Errorf("failed to generate bootstrap: %w", err)
+	}
+
 	cfg := &config.Config{
 		Module:        opts.Module,
 		HTTPFramework: opts.HTTPFramework,
@@ -77,7 +90,7 @@ func Scaffold(destDir string, opts Options) error {
 		return fmt.Errorf("failed to write %s: %w", config.FileName, err)
 	}
 
-	return nil
+	return gengo.TidyModule(destDir)
 }
 
 func createDirectories(destDir string, opts Options) error {

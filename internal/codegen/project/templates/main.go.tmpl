@@ -1,7 +1,21 @@
 package main
 
-import "fmt"
+import (
+	"context"
+	"errors"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"{{.Module}}/internal/bootstrap"
+)
 
 func main() {
-	fmt.Println("{{.Name}} is scaffolded. Run `sgo generate proto <service>` to define your first service.")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := bootstrap.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatal(err)
+	}
 }

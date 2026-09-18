@@ -142,36 +142,79 @@ both show up and the project still builds).
   flat, to avoid every entity's wire types colliding in one Go package
   (Decision #9).
 
-## Phase 3 — HTTP framework adapters
+## Phase 3 — HTTP framework adapters ✅
 
-**Depends on resolving ARCHITECTURE §12's `google.api.http` open
-question first** — Phase 2's descriptor walk does not currently capture
-HTTP route annotations (the starter proto template doesn't import them,
-deliberately, to keep the pure-Go compiler dependency-free for Phase 2).
-Either add that import and resolve it, or derive routes from the CRUD
-RPC-naming convention the starter template already commits to
-(Create→POST, Get→GET/{id}, List→GET, Update→PUT/{id}, Delete→DELETE/{id}
-is the obvious mapping, given every proto sgo scaffolds already follows
-it) — decide before starting the checklist below.
+**Resolved the `google.api.http` question by going with the CRUD
+RPC-naming convention**, not adding the `googleapis` proto dependency —
+keeps Decision #5's "no external proto dependency" property intact. See
+ARCHITECTURE §8.1/§12/Decision #14.
 
-- [ ] `Router` interface (ARCHITECTURE §8.1) + `internal/registry/http.go`.
-- [ ] Gin adapter (first, since it's the current `--http-framework`
-      default).
-- [ ] Echo adapter.
-- [ ] Chi adapter.
-- [ ] Generated `<entity>_routes_gen.go` per framework, driven by the
-      `google.api.http` options captured in Phase 2's descriptor walk
-      (so HTTP paths/methods come from the proto, not a hardcoded
-      `/api/v1/<entity>s` guess like the current implementation).
-- [ ] `cmd/<project>/main.go` template wires the framework selected in
-      `sgo.yaml`.
+- [x] ~~`Router` interface~~ — dropped (ARCHITECTURE Decision #13); each
+      framework's generated `Server` type exposes its native engine field
+      directly instead, since `wire_gen.go` is already regenerated per
+      current framework selection and has no need for an abstraction over
+      it.
+- [x] Gin adapter.
+- [x] Echo adapter.
+- [x] Chi adapter.
+- [x] Generated `<entity>_routes_gen.go` per framework
+      (`internal/codegen/httpgen`), driven by `httpgen.BuildRoutes`'
+      CRUD-naming-convention route derivation (shared across all three
+      frameworks; only the emitted Go code differs per framework) —
+      `/api/v1/<entity>s[/:id]` paths, not a fixed guess independent of
+      the proto's actual RPCs like the pre-Phase-0 implementation.
+- [x] `internal/adapter/in/grpc/<entity>_grpc_server_gen.go`
+      (`internal/codegen/grpcgen`) — a real gRPC server implementing
+      protoc-gen-go-grpc's generated `<Entity>ServiceServer` interface,
+      converting wire↔domain via Phase 2's mapper and delegating to the
+      usecase port. Not originally itemized in this phase's checklist,
+      but required to actually meet the exit criterion below.
+- [x] A generated in-memory repository per entity
+      (`internal/codegen/memgen`, ARCHITECTURE Decision #15) so a
+      generated project is runnable before Phase 4's real adapters exist
+      — also not originally planned, added because there was otherwise no
+      way to meet the exit criterion without waiting for Phase 4.
+- [x] `internal/bootstrap/wire_gen.go` (`internal/codegen/bootstrap`) —
+      the composition root, regenerated on every `sgo generate code` run
+      to wire *every* service on record (not just the one just
+      generated): constructs each entity's in-memory repo + service,
+      registers its HTTP routes and gRPC server, and starts both servers.
+      Also generated (with zero entities) by `sgo init`, so a freshly
+      scaffolded project already builds and runs.
+- [x] `cmd/<project>/main.go` now just calls `bootstrap.Run(ctx)` — since
+      that call never needs to change as services are added (wire_gen.go
+      is what changes), main.go stays a one-time-generated file with
+      nothing that would ever need hand-editing at this stage, rather
+      than needing its own regeneration story.
 
 **Exit criteria:** A generated project with any of the three frameworks
 selected starts an HTTP server whose routes match the proto's
-`google.api.http` annotations, and a gRPC server on a separate port,
-both backed by the same service implementation.
+naming-convention-derived routes, and a gRPC server on a separate port,
+both backed by the same service implementation. Verified for real, not
+just by inspection: `internal/codegen`'s Ginkgo suite scaffolds a
+project, generates a service, hand-implements it against the generated
+in-memory repository, builds the actual binary, runs it as a subprocess,
+and drives a full HTTP create/list/get/update/delete cycle against it
+over real sockets — including a regression assertion that `List` returns
+records, not an empty slice (a real bug in the in-memory repository's
+pagination default, found and fixed while doing this manually before
+automating it). Also verified manually: the same HTTP cycle via `curl`,
+plus a real gRPC client hitting `CreateUser`/`GetUser`/`ListUsers` and
+observing it share state with the HTTP-created records (continuing the
+same id sequence) — confirming both protocols are backed by the same
+service/repository instance, not two independent stacks. Gin was the
+primary manual target; Echo and Chi were verified to build cleanly for a
+generated project (Ginkgo covers their generated content;
+`internal/codegen`'s runtime HTTP test currently exercises Gin only).
 
 ## Phase 4 — Persistence, cache, search
+
+**Framing changed slightly since Phase 3**: every entity already has a
+generated in-memory repository wired as the default (ARCHITECTURE
+Decision #15). This phase is about adding the *real* adapters below and
+making `wire_gen.go` select one of them over the in-memory default when
+`sgo.yaml` has a persistence engine chosen — not about making a project
+runnable for the first time, which Phase 3 already covers.
 
 - [ ] `core/port/out/<entity>_repository.go` self-managed adapter
       (`database/sql`/`sqlx`) for Postgres, MySQL.
@@ -180,10 +223,14 @@ both backed by the same service implementation.
 - [ ] MongoDB adapter (`mongo-driver`), same repository port.
 - [ ] Redis cache adapter behind `core/port/out/cache.go`.
 - [ ] Elasticsearch adapter behind `core/port/out/search.go`.
-- [ ] `internal/bootstrap/wire_gen.go` composition root wires whichever
-      adapters `sgo.yaml` selected into the service layer.
+- [ ] `internal/bootstrap/wire_gen.go` selects the real adapter for
+      whatever `sgo.yaml` chose (falling back to the Phase 3 in-memory
+      default when no persistence engine was selected) instead of always
+      using the in-memory one.
 - [ ] `docker-compose.yml` service blocks + `internal/adapter/out/*`
-      connection config for each datastore (DSN/env vars).
+      connection config for each datastore (DSN/env vars) — Phase 1
+      already generates the compose service blocks; this phase is about
+      the Go adapter code actually connecting to them.
 
 **Exit criteria:** A project generated with Postgres+ORM+Redis boots,
 connects to both from `docker-compose up`, and the generated repository

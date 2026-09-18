@@ -5,11 +5,14 @@ a `.proto` contract, serving both HTTP and gRPC from a hexagonal
 (ports & adapters) core.
 
 > **Status:** in active development. `sgo init`, `sgo generate proto`,
-> and `sgo generate code` (below) are real and working — the quick start
-> is runnable today, not aspirational. HTTP/gRPC serving, pluggable
-> persistence adapters, and the web UI are still ahead. See
-> `docs/CLI.md` for exactly what's implemented today vs. planned, and
-> `PLAN.md` for the phase currently in progress.
+> and `sgo generate code` (below) are real and working, and a generated
+> project actually serves HTTP and gRPC once you implement its service —
+> the quick start is runnable today, not aspirational. Pluggable
+> persistence adapters (Postgres/MySQL/Mongo/Redis/Elasticsearch — a
+> generated service currently runs against an in-memory placeholder) and
+> the web UI are still ahead. See `docs/CLI.md` for exactly what's
+> implemented today vs. planned, and `PLAN.md` for the phase currently in
+> progress.
 
 - **`ARCHITECTURE.md`** — the target architecture: hexagonal layout,
   generated-vs-owned file strategy, pluggable HTTP frameworks and
@@ -29,8 +32,10 @@ sgo generate code user
 ```
 
 Running `sgo generate code user` again after editing the proto further
-regenerates everything derived from it (types, ports, the mapper) without
-touching what you wrote into `user_service.go`.
+regenerates everything derived from it (types, ports, the mapper, HTTP
+routes, the gRPC server) without touching what you wrote into
+`user_service.go`. `go run ./cmd/myservice` then serves HTTP on `:8080`
+and gRPC on `:9090`, both backed by the same service instance.
 
 ## What `sgo` generates
 
@@ -40,14 +45,19 @@ touching what you wrote into `user_service.go`.
 - A hexagonal core (`internal/core`) with domain entities, ports, and
   use-case services — framework- and datastore-agnostic.
 - Pluggable HTTP adapters (Gin, Echo, or Chi) and a gRPC adapter, both
-  backed by the same service implementation. *(planned — Phase 3)*
-- Pluggable persistence (self-managed or ORM) across Postgres, MySQL, and
-  MongoDB, plus Redis caching and Elasticsearch search adapters.
-  *(planned — Phase 4)*
+  backed by the same service implementation. Routes are derived from RPC
+  naming (`Create`/`Get`/`List`/`Update`/`Delete`), not `google.api.http`
+  annotations yet.
+- A generated in-memory repository so a service is runnable immediately;
+  pluggable *persistent* storage (self-managed or ORM) across Postgres,
+  MySQL, and MongoDB, plus Redis caching and Elasticsearch search
+  adapters, is next. *(planned — Phase 4)*
 - Regeneration that never deletes hand-written business logic — see
   `ARCHITECTURE.md` §6. Implemented and covered by an end-to-end test
   suite that edits a proto and asserts hand-written code survives
-  regeneration, with a real `go build` after each run.
+  regeneration, with a real `go build` after each run, plus a suite that
+  builds and runs the compiled binary and drives a full HTTP CRUD cycle
+  against it.
 
 ## Contributing / development
 

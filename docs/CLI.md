@@ -4,22 +4,24 @@ Target command surface for the architecture in `ARCHITECTURE.md`. Not all
 commands exist yet — see `PLAN.md` for phasing. Commands below marked
 **(planned)** don't exist on the current branch.
 
-## `sgo init` ✅ (non-interactive)
+## `sgo init` ✅
 
 ```
-sgo init <project-name> [flags]
+sgo init [project-name] [flags]
 ```
 
 Scaffolds a new project (ARCHITECTURE §3) and writes `sgo.yaml`. Fails if
 `<project-name>` already exists in the current directory.
 
-- Flags provided (or defaults accepted) → scaffolds directly, no
-  prompts. **Implemented, Phase 1.**
-- No flags, TTY attached → launches the interactive selection wizard
-  (ARCHITECTURE §10) instead. **(planned, Phase 5)** — until then, `init`
-  is always the flag-driven path above, regardless of TTY.
+- **No selection flags, stdin is a TTY** → launches the interactive
+  wizard (ARCHITECTURE §10, `internal/wizard`, built on `huh`): project
+  name (pre-filled if given as an argument), module path, HTTP framework,
+  persistence mode, datastores, Redis cache, Elasticsearch search.
+- **Any selection flag given, or stdin isn't a TTY** → scaffolds directly
+  from flags/defaults, no prompts. This is also the automatic fallback in
+  CI/scripts/pipes, with no separate flag needed to request it.
 
-Flags:
+Flags (any one of these, if set, skips the wizard):
 
 | Flag | Values | Default | Notes |
 |---|---|---|---|
@@ -30,9 +32,9 @@ Flags:
 | `--cache` | comma list, currently only `redis` | none | |
 | `--search` | comma list, currently only `elasticsearch` | none | |
 
-`--yes` (to explicitly skip the wizard once it exists) is deferred to
-Phase 5 along with the wizard itself — there's nothing for it to skip
-yet.
+There's no `--yes` flag — a non-TTY stdin already skips the wizard
+automatically, and any single selection flag signals "I want direct
+control" just as well.
 
 Replaces the old `sunny create`/`sunny new`.
 

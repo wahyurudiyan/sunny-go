@@ -137,18 +137,40 @@ connects to both from `docker-compose up`, and the generated repository
 adapter satisfies the port interface (compiles against Phase 2's
 generated port).
 
-## Phase 5 — `sgo init` interactive wizard
+## Phase 5 — `sgo init` interactive wizard ✅
 
-- [ ] Terminal wizard (`huh`, see ARCHITECTURE §10) covering project
-      name/module, HTTP framework, persistence mode, datastores.
-- [ ] Wizard calls the same scaffolding function as the Phase 1 flag-only
-      path — no duplicated logic.
-- [ ] Non-interactive flag path keeps working for CI/scripts (`--yes` or
-      full flag set skips the prompt).
+**Pulled forward, done immediately after Phase 1.** Originally sequenced
+after Phases 2–4, but on inspection the wizard only depends on Phase 1's
+`project.Scaffold`/`project.Options` — it collects exactly the fields
+Phase 1's flags already collect and hands them to the same function. It
+doesn't touch proto/HTTP/persistence codegen at all, so there was no real
+reason to wait.
 
-**Exit criteria:** `sgo init` with no flags launches the wizard;
-`sgo init demo --http-framework gin ... ` still works non-interactively;
-both produce an identical `sgo.yaml` for the same choices.
+- [x] Terminal wizard (`huh`, see ARCHITECTURE §10) covering project
+      name/module, HTTP framework, persistence mode, datastores, in
+      `internal/wizard`. Uses `huh.ThemeCharm()` for the animated,
+      focus-driven look.
+- [x] Wizard calls the same scaffolding function as the Phase 1 flag-only
+      path (`project.Scaffold`) — no duplicated logic. The answer-assembly
+      step (`internal/wizard/answers.go`) is factored out of the form
+      itself specifically so it has a Ginkgo suite without needing to
+      drive a real terminal.
+- [x] Non-interactive flag path keeps working for CI/scripts: passing any
+      selection flag (`--module`, `--http-framework`, `--persistence-mode`,
+      `--db`, `--cache`, `--search`) skips the wizard outright, as does a
+      non-TTY stdin. There's no separate `--yes` flag — any one selection
+      flag already signals "I want direct control," which covers the same
+      case with one less flag to document.
+
+**Exit criteria:** `sgo init` with no flags and a TTY launches the
+wizard; `sgo init demo --http-framework gin ...` still works
+non-interactively (also the automatic fallback when stdin isn't a TTY);
+both go through `project.Scaffold`, so they produce an identical
+`sgo.yaml` shape for the same choices. Verified manually (flag path) and
+via `internal/wizard`'s Ginkgo suite (answer-assembly logic); the form
+interaction itself isn't automated — driving a real bubbletea/huh form in
+CI needs a pty harness (e.g. `x/exp/teatest`), which isn't set up yet and
+wasn't worth blocking this phase on.
 
 ## Phase 6 — Web UI mode
 
@@ -197,6 +219,10 @@ test hitting both the CLI command and the `/api` handler).
 - Phases 3 and 4 are independent of each other and could be reordered or
   parallelized; they're sequenced 3-then-4 here only because HTTP is the
   more visible payoff.
-- Phase 5 and 6 both depend on Phases 1–4 being done, not on each other —
-  6 could move earlier if the web UI is a priority over the terminal
-  wizard, since both are thin frontends over the same engine.
+- ~~Phase 5 and 6 both depend on Phases 1–4 being done, not on each
+  other~~ — this turned out to be wrong for Phase 5: the wizard only
+  needs `project.Scaffold` from Phase 1, so it was pulled forward and
+  landed right after Phase 1 (see Phase 5 above). Phase 6 (web UI) is a
+  different story — once `sgo generate`/adapters exist, a dashboard
+  showing their status is more useful, so it stays put unless the web UI
+  becomes the priority over Phases 2–4 for some other reason.

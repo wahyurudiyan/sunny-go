@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/project"
 	"github.com/wahyurudiyan/sunny-go/internal/config"
+	"github.com/wahyurudiyan/sunny-go/internal/wizard"
 )
 
 var (
@@ -22,28 +24,34 @@ var (
 )
 
 var initCmd = &cobra.Command{
-	Use:   "init <project-name>",
+	Use:   "init [project-name]",
 	Short: "Scaffold a new hexagonal Go service",
 	Long: `Scaffold a new project's directory structure and write sgo.yaml.
 
-This is the non-interactive form (flags only); the interactive selection
-wizard is a later phase — see PLAN.md.
+With no selection flags and a terminal attached, this launches an
+interactive wizard for the project name, HTTP framework, persistence
+mode, and datastores. Pass any selection flag (or run non-interactively)
+to skip the wizard and scaffold directly.
 
 Examples:
+  sgo init
   sgo init myservice
   sgo init myservice --http-framework echo --db postgres,mongo --cache redis
 `,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		name := args[0]
+		var name string
+		if len(args) == 1 {
+			name = args[0]
+		}
 
-		opts, err := buildInitOptions(name)
+		opts, err := resolveInitOptions(cmd, name)
 		if err != nil {
 			fmt.Printf("❌ Error: %v\n", err)
 			os.Exit(1)
 		}
 
-		destDir := filepath.Join(".", name)
+		destDir := filepath.Join(".", opts.Name)
 		if err := project.Scaffold(destDir, *opts); err != nil {
 			fmt.Printf("❌ Failed to scaffold project: %v\n", err)
 			os.Exit(1)
@@ -51,17 +59,38 @@ Examples:
 
 		fmt.Printf("✅ Created %s\n\n", destDir)
 		fmt.Printf("📁 Project structure:\n")
-		fmt.Printf("   %s/\n", name)
+		fmt.Printf("   %s/\n", opts.Name)
 		fmt.Printf("   ├── sgo.yaml                   # project manifest\n")
 		fmt.Printf("   ├── contract/pb/                # your .proto files go here\n")
 		fmt.Printf("   ├── internal/core/               # hexagonal core (domain, ports, services)\n")
 		fmt.Printf("   ├── internal/adapter/             # HTTP/gRPC + datastore adapters\n")
-		fmt.Printf("   ├── cmd/%s/\n", name)
+		fmt.Printf("   ├── cmd/%s/\n", opts.Name)
 		fmt.Printf("   └── docker/                     # Dockerfile + docker-compose.yml\n")
 		fmt.Printf("\n🚀 Next steps:\n")
-		fmt.Printf("   cd %s\n", name)
+		fmt.Printf("   cd %s\n", opts.Name)
 		fmt.Printf("   sgo generate proto <service>\n")
 	},
+}
+
+// wizardFlags lists the init flags whose presence means the user wants
+// direct, non-interactive control — any one of them skips the wizard.
+var wizardFlags = []string{"module", "http-framework", "persistence-mode", "db", "cache", "search"}
+
+// resolveInitOptions decides between the interactive wizard and the
+// flag-driven path (ARCHITECTURE.md §10): the wizard runs only when no
+// selection flag was given and stdin is a terminal.
+func resolveInitOptions(cmd *cobra.Command, name string) (*project.Options, error) {
+	for _, flag := range wizardFlags {
+		if cmd.Flags().Changed(flag) {
+			return buildInitOptions(name)
+		}
+	}
+
+	if !isatty.IsTerminal(os.Stdin.Fd()) {
+		return buildInitOptions(name)
+	}
+
+	return wizard.Run(name)
 }
 
 func buildInitOptions(name string) (*project.Options, error) {

@@ -9,24 +9,19 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "sunny",
-	Short: "Sunny CLI for Go web application boilerplating.",
+	Use:   "sgo",
+	Short: "sgo CLI for Go web application boilerplating.",
 	Long: color.HiWhiteString(banner.SunnyGoBannerBold) + `
-SunnyGo is an open-source CLI tool to help you bootstrap and generate Go web application boilerplate code easily.
+sgo is an open-source CLI tool to bootstrap and evolve a Go service from a
+proto contract, serving both HTTP and gRPC from a hexagonal core.
 
-Available commands:
-  create         Initialize a new project
-  generate|gen|g Generate proto contract, api, service, repository
-  help           Show help for sunny CLI
+This build is mid-redesign: the command set is being rebuilt per
+ARCHITECTURE.md and PLAN.md in the repository root. Run 'sgo help' for
+what's available right now.
 
 Usage:
-  sunny <command> [flags]
-  sunny [command] --help
-
-Examples:
-  sunny create my-api
-  sunny g api user
-  sunny help
+  sgo <command> [flags]
+  sgo [command] --help
 `,
 }
 

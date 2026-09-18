@@ -6,25 +6,19 @@ import (
 
 var helpCmd = &cobra.Command{
 	Use:   "help",
-	Short: "Show help for sunny CLI.",
-	Long: `Show usage and help for sunny CLI.
+	Short: "Show help for sgo CLI.",
+	Long: `Show usage and help for sgo CLI.
 
-sunny-go is an open-source CLI tool to help you bootstrap and generate Go web application boilerplate code easily.
+sgo is an open-source CLI tool to bootstrap and evolve a Go service from a
+proto contract, serving both HTTP and gRPC from a hexagonal core.
 
-Available commands:
-  create, new    Initialize a new Go microservice project
-  generate, gen, g    Generate proto contract, api, service, repository
-  help               Show help for sunny CLI
+This build is mid-redesign; see ARCHITECTURE.md and PLAN.md in the
+repository root for the target command set (sgo init, sgo generate proto,
+sgo generate code, sgo ui, ...) and which phase is currently landing.
 
 Usage:
-  sunny <command> [flags]
-  sunny [command] --help
-
-Examples:
-  sunny create user-service
-  sunny new auth-service
-  sunny g proto ./proto/user.proto
-  sunny help
+  sgo <command> [flags]
+  sgo [command] --help
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Show the root command help
@@ -33,5 +27,7 @@ Examples:
 }
 
 func init() {
-	rootCmd.AddCommand(helpCmd)
+	// Replaces Cobra's default help command so "help" doesn't appear
+	// twice in `sgo --help`'s command list.
+	rootCmd.SetHelpCommand(helpCmd)
 }

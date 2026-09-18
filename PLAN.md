@@ -6,26 +6,39 @@ dependency, not necessarily by priority — see notes per phase.
 
 ## Phase 0 — Stabilize & clear the ground
 
-Nothing user-facing changes yet; this makes the rest of the plan safe to
-build on.
+This phase clears dead/broken code and lands the test framework; the
+real command surface (`init`/`generate`) is intentionally thin-to-absent
+until Phases 1–2 rebuild it properly.
 
-- [ ] Fix the duplicate `init()` double-registering `generateCmd` in
-      `internal/commands/generate.go`.
-- [ ] Restore/rewrite root `README.md` (currently contains a generated
-      child project's README from a past accidental overwrite).
-- [ ] Rename the binary/`Use` field from `sunny` to `sgo`; update
+- [x] Restore/rewrite root `README.md` (had accidentally been overwritten
+      with a generated child project's README).
+- [x] Rename the binary/`Use` field from `sunny` to `sgo`; update
       `Makefile` build target accordingly. Module path stays
       `github.com/wahyurudiyan/sunny-go` (see ARCHITECTURE §Decisions #1).
-- [ ] Delete `internal/templates/`, `internal/generate/`, and
-      `internal/plugins/protoc-gen-go-http/` (confirmed dead/disconnected
-      in the prior analysis) — superseded by `internal/codegen/` in later
-      phases. Keep `internal/banner/` and the Cobra command skeleton.
-- [ ] Add `internal/config` package with the `sgo.yaml` schema (read,
-      write, validate) from ARCHITECTURE §7, with unit tests.
+      Also fixed the root `Makefile` itself, which had the same
+      accidental-overwrite problem as the README (referenced a
+      nonexistent `proto/` dir and `bin/test-setup`).
+- [x] Delete `internal/templates/`, `internal/generate/`,
+      `internal/create/`, and `internal/plugins/protoc-gen-go-http/`
+      (confirmed dead/disconnected in the prior analysis) — superseded by
+      `internal/codegen/` in later phases. Along with them, delete
+      `internal/commands/create.go`, `generate.go`, and `list.go`, which
+      depended on those packages (this also removes the duplicate
+      `init()` that was double-registering `generateCmd` — moot once the
+      file is gone). `sgo init`, `sgo generate proto/code`, and `sgo list`
+      return in Phases 1–2 built against the new `internal/codegen`.
+      Kept `internal/banner/` and the root/help command skeleton.
+- [x] Adopt Ginkgo v2 + Gomega as the test framework (ARCHITECTURE
+      "Testing strategy" section); added as `go.mod` dependencies.
+- [x] Add `internal/config` package with the `sgo.yaml` schema (read,
+      write, validate) from ARCHITECTURE §7, with a Ginkgo BDD suite
+      (`config_suite_test.go` + `config_test.go`) — the reference example
+      for how every later package is tested.
 
 **Exit criteria:** `go build ./...` and `go vet ./...` clean, no dead
 generator code left, `sgo.yaml` can be round-tripped (write → read →
-equal), root README accurate.
+equal) under a passing Ginkgo suite, root README and Makefile accurate.
+All met on this branch.
 
 ## Phase 1 — Project scaffolding (`sgo init`, non-interactive)
 
@@ -62,9 +75,12 @@ This is the heart of requirements #1–#3.
         with panic-stub method bodies for each use-case method).
   - [ ] Generate the wire↔domain mapper (`_gen.go`, always overwritten).
 - [ ] **Safe-regeneration**: implement the `go/parser`-based method-set
-      diff + stub-append described in ARCHITECTURE §6, with a test that
-      asserts a hand-edited method body survives a second
-      `sgo generate code` run after the proto gains a field/method.
+      diff + stub-append described in ARCHITECTURE §6, with a Ginkgo spec
+      (`Describe("safe regeneration")` / `It("preserves a hand-written
+      method body across a second generate run")`) that asserts a
+      hand-edited method body survives a second `sgo generate code` run
+      after the proto gains a field/method. This is the regression test
+      for requirement #2, not a manual check.
 - [ ] `sgo list` updated to reflect proto → entity → service → generated
       status per service (this already existed in a simpler form; keep
       the UX, rewire the data source).
@@ -141,10 +157,13 @@ test hitting both the CLI command and the `/api` handler).
 
 ## Phase 7 — Polish
 
-- [ ] Test coverage for `internal/codegen/*` (currently the whole repo
-      has zero tests).
+- [ ] Ginkgo test coverage for the rest of `internal/codegen/*` (Phase 0
+      set the pattern via `internal/config`; everything since should
+      already have specs — this item is about closing gaps, not starting
+      from zero).
 - [ ] End-to-end test: `sgo init` → `sgo generate proto` → edit proto →
-      `sgo generate code` → `go build` the generated project in CI.
+      `sgo generate code` → `go build` the generated project in CI, as a
+      Ginkgo spec.
 - [ ] Example project committed under `examples/` or generated in CI and
       thrown away — pick one, don't do both.
 - [ ] Update root `README.md`, `ARCHITECTURE.md`, `docs/CLI.md` for drift

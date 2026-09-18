@@ -1,44 +1,28 @@
-# test-setup Makefile
+# sgo Makefile
 
-.PHONY: build clean proto test
+.PHONY: build clean test deps run dev
 
-# Build the application
+# Build the sgo CLI
 build:
-	go build -o bin/sunny ./cmd
+	go build -o bin/sgo ./cmd
 
 # Clean build artifacts
 clean:
 	rm -rf bin/
-	rm -rf generated/
 
-# Generate protobuf code
-proto:
-	@echo "Generating protobuf code..."
-	@for proto in $$(find proto -name "*.proto"); do \
-		echo "Processing $$proto"; \
-		protoc --proto_path=proto \
-			--go_out=generated \
-			--go_opt=paths=source_relative \
-			--go-grpc_out=generated \
-			--go-grpc_opt=paths=source_relative \
-			--go-http_out=generated \
-			--go-http_opt=paths=source_relative \
-			$$proto; \
-	done
-
-# Run tests
+# Run the test suite (Ginkgo specs, run via `go test`)
 test:
 	go test ./...
 
-# Install dependencies
+# Install/tidy dependencies
 deps:
 	go mod tidy
 	go mod download
 
-# Run the application
+# Build and run the CLI
 run: build
-	./bin/test-setup
+	./bin/sgo
 
-# Development server with hot reload
+# Run without building a binary first
 dev:
-	go run ./cmd/test-setup
+	go run ./cmd

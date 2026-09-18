@@ -279,9 +279,9 @@ internal/
 
 **Templates move from Go string constants to `go:embed` `.tmpl` files**
 (`internal/codegen/**/templates/*.tmpl`), one per generated file kind.
-This replaces the current ~2,600 lines of unused string-constant
-templates in `internal/templates/` and is far easier to review, diff, and
-extend than editing Go string literals.
+This replaces the ~2,600 lines of unused string-constant templates that
+used to live in `internal/templates/` (removed in Phase 0) and is far
+easier to review, diff, and extend than editing Go string literals.
 
 ## 10. `sgo init` interactive selection UI
 
@@ -320,6 +320,35 @@ the same choice it offers the user) that serves:
 This is intentionally the last phase to build (see `PLAN.md`) — it
 depends on `internal/codegen` and `internal/config` being stable enough
 to have a real API surface.
+
+## Testing strategy
+
+All Go tests — in `sgo` itself and in what it generates — are
+[Ginkgo](https://github.com/onsi/ginkgo) v2 + [Gomega](https://github.com/onsi/gomega)
+specs, written BDD-style, rather than plain `testing.T` table tests.
+
+- Every package with behavior worth testing gets a `<pkg>_suite_test.go`
+  that registers the Ginkgo fail handler and calls `RunSpecs`, plus one or
+  more `_test.go` files containing `Describe`/`Context`/`It` blocks.
+  `internal/config` (§7) is the first package built this way and is the
+  reference example for the rest.
+- Structure: `Describe("<subject>")` names the unit under test (a type or
+  function), `Context("when <precondition>")` names the scenario,
+  `It("<expected behavior>")` states the outcome in one sentence. Assertions
+  use Gomega matchers (`Expect(x).To(Equal(y))`) instead of manual
+  `if`/`t.Errorf`.
+- Ginkgo v2 runs through the standard `go test ./...` (via `RunSpecs`
+  inside a `Test*(t *testing.T)` entrypoint) — no separate binary is
+  required for CI or `make test`. The `ginkgo` CLI is optional, for
+  richer local output or parallel runs.
+- The riskier, behavior-level exit criteria in `PLAN.md` (e.g. Phase 2's
+  "a hand-written method body survives a second `generate code` run") are
+  written as Ginkgo specs too, not verified by hand — they're the
+  regression tests that keep that guarantee true as the codegen evolves.
+- Table-driven cases (e.g. the `Validate` rejection cases per invalid
+  field) are expressed as multiple `Context`/`It` blocks rather than a
+  `[]struct{...}` loop, so a failing case is reported with its own
+  descriptive name instead of a row index.
 
 ## Decisions
 

@@ -207,35 +207,89 @@ primary manual target; Echo and Chi were verified to build cleanly for a
 generated project (Ginkgo covers their generated content;
 `internal/codegen`'s runtime HTTP test currently exercises Gin only).
 
-## Phase 4 — Persistence, cache, search
+## Phase 4 — Persistence, cache, search ✅
 
 **Framing changed slightly since Phase 3**: every entity already has a
 generated in-memory repository wired as the default (ARCHITECTURE
-Decision #15). This phase is about adding the *real* adapters below and
+Decision #15). This phase was about adding the *real* adapters below and
 making `wire_gen.go` select one of them over the in-memory default when
 `sgo.yaml` has a persistence engine chosen — not about making a project
 runnable for the first time, which Phase 3 already covers.
 
-- [ ] `core/port/out/<entity>_repository.go` self-managed adapter
-      (`database/sql`/`sqlx`) for Postgres, MySQL.
-- [ ] Same port, GORM-backed adapter, selectable via `sgo.yaml`
-      `persistence.mode`.
-- [ ] MongoDB adapter (`mongo-driver`), same repository port.
-- [ ] Redis cache adapter behind `core/port/out/cache.go`.
-- [ ] Elasticsearch adapter behind `core/port/out/search.go`.
-- [ ] `internal/bootstrap/wire_gen.go` selects the real adapter for
-      whatever `sgo.yaml` chose (falling back to the Phase 3 in-memory
-      default when no persistence engine was selected) instead of always
-      using the in-memory one.
-- [ ] `docker-compose.yml` service blocks + `internal/adapter/out/*`
-      connection config for each datastore (DSN/env vars) — Phase 1
-      already generates the compose service blocks; this phase is about
-      the Go adapter code actually connecting to them.
+- [x] `internal/adapter/out/persistence/<engine>/<entity>_repository_gen.go`
+      self-managed adapter (`database/sql`, hand-written SQL, `pgx`/
+      `go-sql-driver/mysql` drivers) for Postgres and MySQL
+      (`internal/codegen/sqlgen`).
+- [x] Same port, GORM-backed adapter, selectable via `sgo.yaml`
+      `persistence.mode` — one shared pair of templates for both engines
+      (`internal/codegen/sqlgen`), since GORM's API is dialect-agnostic;
+      only the dialector import/DSN differ.
+- [x] MongoDB adapter (`go.mongodb.org/mongo-driver`), same repository
+      port (`internal/codegen/mongogen`).
+- [x] Redis cache adapter behind `core/port/out/cache.go`
+      (`internal/codegen/cachegen`).
+- [x] Elasticsearch adapter behind `core/port/out/search.go`
+      (`internal/codegen/searchgen`, using `esapi`).
+- [x] `internal/bootstrap/wire_gen.go` selects the real adapter for
+      whatever `sgo.yaml`'s **first** selected persistence engine is
+      (falling back to the Phase 3 in-memory default when none was
+      selected) instead of always using the in-memory one; also connects
+      a cache/search client when selected, though — see Decision #19 —
+      neither is auto-wired into a service's constructor.
+- [x] Connection config via env vars (`POSTGRES_HOST`/`_PORT`/`_USER`/
+      `_PASSWORD`/`_DB`, `MYSQL_*`, `MONGO_HOST`/`_PORT`/`_DB`,
+      `REDIS_HOST`/`_PORT`, `ELASTICSEARCH_ADDR`), with generic
+      placeholder defaults — not yet cross-wired to Phase 1's
+      `docker-compose.yml` env values (see Open Questions).
+
+**Not originally itemized, added because they were necessary:**
+- **UUID-based string ids** (`github.com/google/uuid`), generated in the
+  adapter before insert, instead of relying on each engine's own
+  auto-increment/ObjectID mechanism — the one thing that let `Create`
+  have an identical shape across Postgres, MySQL, and Mongo despite their
+  very different native id conventions, given the domain `Id` field is
+  already a plain `string` (Decision #17).
+- **`AutoMigrate`** per SQL adapter (`CREATE TABLE IF NOT EXISTS` for
+  self-managed, `db.AutoMigrate` for GORM), called once from
+  `wire_gen.go`, so a freshly generated project works against an empty
+  database without a separate migration step. Mongo doesn't need one
+  (schemaless).
 
 **Exit criteria:** A project generated with Postgres+ORM+Redis boots,
-connects to both from `docker-compose up`, and the generated repository
-adapter satisfies the port interface (compiles against Phase 2's
-generated port).
+connects to both, and the generated repository adapter satisfies the
+port interface (compiles against Phase 2's generated port). **Exceeded**,
+not just met: verified against a real, locally running Postgres and
+Redis (this development environment has both installed, no Docker
+daemon available) — full CRUD through `internal/codegen/sqlgen`'s Ginkgo
+suite for *both* Postgres modes, a get/set/delete round trip through
+`internal/codegen/cachegen`'s suite for Redis, and — the strongest
+check — an `internal/codegen` end-to-end spec that builds the actual
+binary, creates a record over real HTTP, **kills and restarts the
+process**, and confirms the record is still there: real persistence, not
+the Phase 3 in-memory adapter's. MySQL, MongoDB, and Elasticsearch have
+no local server or Docker daemon available in this environment, so
+they're verified differently: MySQL/Mongo by generating a throwaway
+module and running `go build`/`go run` against the real client libraries
+(catches wrong signatures, wrong imports — the same class of bug the
+Mongo template's `bson.D{{"_id", 1}}` templating collision turned out to
+be, caught and fixed this way) rather than a live round trip;
+Elasticsearch by the same compile-check alone, no live round trip
+possible without a query target. All four persistence/cache combinations
+(mysql+orm, mysql+self-managed, mongo+orm, with redis+elasticsearch
+alongside each) were also verified to `go build` cleanly end to end
+through the actual `sgo` CLI.
+
+**Deviations from the original plan, and why:**
+- `docker-compose.yml`'s env values (project-name-based
+  `POSTGRES_USER`/`_PASSWORD`/`_DB` from Phase 1) aren't cross-wired to
+  the adapters' own generic defaults (`postgres`/`postgres`/`postgres`).
+  Running via `docker-compose` today needs the developer to either align
+  the two by hand or set the adapter's env vars to match. Not resolved
+  here — see Open Questions.
+- `sgo.yaml` only supports **one active persistence engine per project**
+  (the first in `persistence.engines`), even though the schema allows a
+  list and `--db` accepts a comma-separated one. Per-entity persistence
+  engine choice isn't supported — see ARCHITECTURE §12.
 
 ## Phase 5 — `sgo init` interactive wizard ✅
 

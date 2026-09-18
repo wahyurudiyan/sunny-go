@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,7 +23,12 @@ import (
 
 // scaffoldProject builds a real project (Phase 1's scaffolder) plus a
 // starter user.proto, so these tests exercise `sgo init` +
-// `sgo generate proto` + `sgo generate code` together end to end.
+// `sgo generate proto` + `sgo generate code` together end to end. No
+// persistence engine is selected — these specs are about the HTTP/gRPC
+// wiring, so they run against the in-memory default, fast and isolated
+// from any external database. See "with a real Postgres" below for the
+// Phase 4-specific persistence path, which needs its own real Postgres
+// and its own test isolation (a shared table to reset between runs).
 func scaffoldProject(root string) string {
 	GinkgoHelper()
 
@@ -31,10 +37,6 @@ func scaffoldProject(root string) string {
 		Name:          "demo",
 		Module:        "demo",
 		HTTPFramework: config.HTTPFrameworkGin,
-		Persistence: config.Persistence{
-			Mode:    config.PersistenceModeORM,
-			Engines: []config.PersistenceEngine{config.PersistenceEnginePostgres},
-		},
 	}
 	Expect(project.Scaffold(dir, opts)).To(Succeed())
 	Expect(sgoproto.GenerateStub(filepath.Join(dir, "contract", "pb"), "user", "demo")).To(Succeed())
@@ -265,6 +267,103 @@ var _ = Describe("a generated and implemented project, running for real", func()
 
 		afterDelete := getJSON(client, baseURL)
 		Expect(afterDelete["total"]).To(Equal(1.0))
+	})
+})
+
+// Complements the in-memory runtime test above with the Phase 4 path:
+// a project whose sgo.yaml actually selects Postgres must get a
+// generated project wired to the real adapter (not memory), and data
+// must survive the server process restarting — proving real durable
+// persistence, not just a working HTTP round trip. Needs its own real,
+// locally reachable Postgres and its own table cleanup, since it shares
+// sqlgen's own test suite's default connection target.
+var _ = Describe("a generated project with Postgres selected, running for real", func() {
+	It("persists data across a server restart", func() {
+		conn, err := net.DialTimeout("tcp", "127.0.0.1:5432", 500*time.Millisecond)
+		if err != nil {
+			Skip("no local Postgres reachable on 127.0.0.1:5432: " + err.Error())
+			return
+		}
+		conn.Close()
+
+		dropCmd := exec.Command("psql", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres", "-c", "DROP TABLE IF EXISTS users;")
+		dropCmd.Env = append(os.Environ(), "PGPASSWORD=postgres")
+		_ = dropCmd.Run()
+
+		root, err := os.MkdirTemp("", "sgo-codegen-postgres-test-*")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(os.RemoveAll(root)).To(Succeed()) })
+
+		dir := filepath.Join(root, "demo")
+		opts := project.Options{
+			Name:          "demo",
+			Module:        "demo",
+			HTTPFramework: config.HTTPFrameworkGin,
+			Persistence: config.Persistence{
+				Mode:    config.PersistenceModeORM,
+				Engines: []config.PersistenceEngine{config.PersistenceEnginePostgres},
+			},
+		}
+		Expect(project.Scaffold(dir, opts)).To(Succeed())
+		Expect(sgoproto.GenerateStub(filepath.Join(dir, "contract", "pb"), "user", "demo")).To(Succeed())
+
+		cfg, err := config.Load(dir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
+
+		Expect(filepath.Join(dir, "internal", "adapter", "out", "persistence", "postgres", "user_repository_gen.go")).To(BeAnExistingFile())
+
+		wireContent, err := os.ReadFile(filepath.Join(dir, "internal", "bootstrap", "wire_gen.go"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(wireContent)).To(ContainSubstring("postgres.NewUserRepository(db)"), "must use the real adapter, not memory, once Postgres is selected")
+
+		servicePath := filepath.Join(dir, "internal", "core", "service", "user_service.go")
+		Expect(os.WriteFile(servicePath, []byte(userServiceImplementation), 0644)).To(Succeed())
+
+		binPath := filepath.Join(dir, "bin", "demo")
+		buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/demo")
+		buildCmd.Dir = dir
+		out, err := buildCmd.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), string(out))
+
+		baseURL := "http://127.0.0.1:8080/api/v1/users"
+		client := &http.Client{Timeout: 2 * time.Second}
+
+		firstRun := exec.Command(binPath)
+		var firstOutput bytes.Buffer
+		firstRun.Stdout = &firstOutput
+		firstRun.Stderr = &firstOutput
+		Expect(firstRun.Start()).To(Succeed())
+
+		Eventually(func() error {
+			_, err := client.Get(baseURL)
+			return err
+		}, 5*time.Second, 100*time.Millisecond).Should(Succeed(), firstOutput.String())
+
+		created := postJSON(client, baseURL, `{"name":"Ada","description":"engineer"}`)
+		id := created["user"].(map[string]any)["id"].(string)
+		Expect(id).NotTo(BeEmpty())
+
+		Expect(firstRun.Process.Kill()).To(Succeed())
+		_, _ = firstRun.Process.Wait()
+
+		secondRun := exec.Command(binPath)
+		var secondOutput bytes.Buffer
+		secondRun.Stdout = &secondOutput
+		secondRun.Stderr = &secondOutput
+		Expect(secondRun.Start()).To(Succeed())
+		DeferCleanup(func() {
+			_ = secondRun.Process.Kill()
+			_, _ = secondRun.Process.Wait()
+		})
+
+		Eventually(func() error {
+			_, err := client.Get(baseURL)
+			return err
+		}, 5*time.Second, 100*time.Millisecond).Should(Succeed(), secondOutput.String())
+
+		got := getJSON(client, baseURL+"/"+id)
+		Expect(got["user"].(map[string]any)["name"]).To(Equal("Ada"), "data must survive the process restarting — this is what makes it real persistence, not the Phase 3 in-memory adapter")
 	})
 })
 

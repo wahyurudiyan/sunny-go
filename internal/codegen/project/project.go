@@ -74,8 +74,17 @@ func Scaffold(destDir string, opts Options) error {
 		return fmt.Errorf("failed to generate HTTP server boilerplate: %w", err)
 	}
 
+	// wire_gen.go at init time is intentionally minimal — no entities, no
+	// persistence/cache/search adapters, since `sgo generate code` hasn't
+	// created any of that yet. It's rewired on the first (and every
+	// later) `sgo generate code` run to reflect what actually exists.
+	bootstrapCfg := &config.Config{
+		Module:        opts.Module,
+		HTTPFramework: opts.HTTPFramework,
+		Persistence:   config.Persistence{Mode: opts.Persistence.Mode},
+	}
 	bootstrapDir := filepath.Join(destDir, "internal", "bootstrap")
-	if err := bootstrap.Generate(opts.Module, opts.HTTPFramework, nil, bootstrapDir); err != nil {
+	if err := bootstrap.Generate(bootstrapCfg, bootstrapDir); err != nil {
 		return fmt.Errorf("failed to generate bootstrap: %w", err)
 	}
 

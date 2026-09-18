@@ -79,12 +79,29 @@ Compiles `contract/pb/user.proto` (via a pure-Go compiler — no `buf`/
   (`internal/adapter/in/grpc/user_grpc_server_gen.go`) implementing the
   real protoc-gen-go-grpc server interface
 - A default in-memory repository
-  (`internal/adapter/out/persistence/memory/user_repository_gen.go`), so
-  the service is runnable before a real persistence adapter exists
-  (Phase 4)
+  (`internal/adapter/out/persistence/memory/user_repository_gen.go`) —
+  always generated, so the service is runnable even with no persistence
+  engine selected
+- If `sgo.yaml` selects a persistence engine (`--db` at `sgo init`): the
+  real repository adapter for it —
+  `internal/adapter/out/persistence/<engine>/user_repository_gen.go` +
+  `conn_gen.go`. Postgres/MySQL support both `orm` (GORM) and
+  `self-managed` (hand-written SQL) modes, per `--persistence-mode`;
+  MongoDB uses the official driver (no mode split). IDs are
+  `google/uuid`-generated on every engine. `AutoMigrate` runs at startup
+  so a fresh, empty database works without a separate migration step.
+- If `sgo.yaml` selects `redis`/`elasticsearch` (`--cache`/`--search` at
+  `sgo init`): the `Cache`/`Search` ports
+  (`internal/core/port/out/cache.go`/`search.go`) and their adapters
+  (`internal/adapter/out/cache/redis/`,
+  `internal/adapter/out/search/elasticsearch/`). Connected in
+  `wire_gen.go` if selected, but **not** auto-wired into any service —
+  add one as a parameter to `New<Entity>Service` yourself
+  (`internal/core/service`) if you want to use it.
 - `internal/bootstrap/wire_gen.go` — regenerated to wire *every* service
-  on record (not just this one) to the HTTP/gRPC servers and starts both:
-  HTTP on `:8080`, gRPC on `:9090`
+  on record (not just this one) to whichever repository is active (the
+  real adapter if one is selected, otherwise in-memory) and starts both
+  servers: HTTP on `:8080`, gRPC on `:9090`
 
 ...and **creates, but never overwrites**, the owned files:
 `internal/core/domain/user/user.go`,

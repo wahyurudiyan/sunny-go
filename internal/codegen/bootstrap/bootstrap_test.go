@@ -13,6 +13,14 @@ import (
 	"github.com/wahyurudiyan/sunny-go/internal/config"
 )
 
+func baseCfg() *config.Config {
+	return &config.Config{
+		Module:        "demo",
+		HTTPFramework: config.HTTPFrameworkGin,
+		Persistence:   config.Persistence{Mode: config.PersistenceModeORM},
+	}
+}
+
 var _ = Describe("Generate", func() {
 	var (
 		root, destDir string
@@ -29,7 +37,8 @@ var _ = Describe("Generate", func() {
 
 	Context("with no services yet (fresh `sgo init`)", func() {
 		It("still writes a valid, buildable Run that starts empty servers", func() {
-			Expect(bootstrap.Generate("demo", config.HTTPFrameworkGin, nil, destDir)).To(Succeed())
+			cfg := baseCfg()
+			Expect(bootstrap.Generate(cfg, destDir)).To(Succeed())
 
 			content, err := os.ReadFile(filepath.Join(destDir, "wire_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
@@ -42,9 +51,11 @@ var _ = Describe("Generate", func() {
 		})
 	})
 
-	Context("with services on record", func() {
-		It("wires every service, not just one", func() {
-			Expect(bootstrap.Generate("demo", config.HTTPFrameworkGin, []string{"user", "order"}, destDir)).To(Succeed())
+	Context("with services on record and no persistence engine selected", func() {
+		It("wires every service to the in-memory repository", func() {
+			cfg := baseCfg()
+			cfg.Services = []string{"user", "order"}
+			Expect(bootstrap.Generate(cfg, destDir)).To(Succeed())
 
 			content, err := os.ReadFile(filepath.Join(destDir, "wire_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
@@ -60,23 +71,104 @@ var _ = Describe("Generate", func() {
 		})
 	})
 
+	Context("when a persistence engine is selected", func() {
+		It("wires postgres in ORM mode: Connect(), AutoMigrate(db), and New<Entity>Repository(db)", func() {
+			cfg := baseCfg()
+			cfg.Services = []string{"user"}
+			cfg.Persistence.Engines = []config.PersistenceEngine{config.PersistenceEnginePostgres}
+			Expect(bootstrap.Generate(cfg, destDir)).To(Succeed())
+
+			content, err := os.ReadFile(filepath.Join(destDir, "wire_gen.go"))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(string(content)).To(ContainSubstring(`postgres "demo/internal/adapter/out/persistence/postgres"`))
+			Expect(string(content)).To(ContainSubstring("db, err := postgres.Connect()"))
+			Expect(string(content)).To(ContainSubstring("postgres.AutoMigrate(db)"))
+			Expect(string(content)).To(ContainSubstring("postgres.NewUserRepository(db)"))
+			Expect(string(content)).NotTo(ContainSubstring("memory."))
+
+			assertValidGo(filepath.Join(destDir, "wire_gen.go"))
+		})
+
+		It("wires postgres in self-managed mode with a ctx-taking Connect/AutoMigrate", func() {
+			cfg := baseCfg()
+			cfg.Persistence.Mode = config.PersistenceModeSelfManaged
+			cfg.Services = []string{"user"}
+			cfg.Persistence.Engines = []config.PersistenceEngine{config.PersistenceEnginePostgres}
+			Expect(bootstrap.Generate(cfg, destDir)).To(Succeed())
+
+			content, err := os.ReadFile(filepath.Join(destDir, "wire_gen.go"))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(string(content)).To(ContainSubstring("db, err := postgres.Connect(ctx)"))
+			Expect(string(content)).To(ContainSubstring("postgres.AutoMigrate(ctx, db)"))
+
+			assertValidGo(filepath.Join(destDir, "wire_gen.go"))
+		})
+
+		It("wires mongo with no AutoMigrate call (schemaless)", func() {
+			cfg := baseCfg()
+			cfg.Services = []string{"user"}
+			cfg.Persistence.Engines = []config.PersistenceEngine{config.PersistenceEngineMongo}
+			Expect(bootstrap.Generate(cfg, destDir)).To(Succeed())
+
+			content, err := os.ReadFile(filepath.Join(destDir, "wire_gen.go"))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(string(content)).To(ContainSubstring("db, err := mongo.Connect(ctx)"))
+			Expect(string(content)).To(ContainSubstring("mongo.NewUserRepository(db)"))
+			Expect(string(content)).NotTo(ContainSubstring("AutoMigrate"))
+
+			assertValidGo(filepath.Join(destDir, "wire_gen.go"))
+		})
+	})
+
+	Context("when cache and search are selected", func() {
+		It("connects both clients without wiring them into any service", func() {
+			cfg := baseCfg()
+			cfg.Services = []string{"user"}
+			cfg.Cache = []config.CacheEngine{config.CacheEngineRedis}
+			cfg.Search = []config.SearchEngine{config.SearchEngineElasticsearch}
+			Expect(bootstrap.Generate(cfg, destDir)).To(Succeed())
+
+			content, err := os.ReadFile(filepath.Join(destDir, "wire_gen.go"))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(string(content)).To(ContainSubstring(`cacheadapter "demo/internal/adapter/out/cache/redis"`))
+			Expect(string(content)).To(ContainSubstring("cacheadapter.Connect(ctx)"))
+			Expect(string(content)).To(ContainSubstring(`searchadapter "demo/internal/adapter/out/search/elasticsearch"`))
+			Expect(string(content)).To(ContainSubstring("searchadapter.Connect()"))
+			Expect(string(content)).NotTo(ContainSubstring("service.NewUserService(cache"), "cache/search must not appear in the service constructor call")
+
+			assertValidGo(filepath.Join(destDir, "wire_gen.go"))
+		})
+	})
+
 	Context("per HTTP framework", func() {
 		It("uses the gin server's Engine field", func() {
-			Expect(bootstrap.Generate("demo", config.HTTPFrameworkGin, []string{"user"}, destDir)).To(Succeed())
+			cfg := baseCfg()
+			cfg.Services = []string{"user"}
+			Expect(bootstrap.Generate(cfg, destDir)).To(Succeed())
 			content, err := os.ReadFile(filepath.Join(destDir, "wire_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring("httpServer.Engine"))
 		})
 
 		It("uses the echo server's Echo field", func() {
-			Expect(bootstrap.Generate("demo", config.HTTPFrameworkEcho, []string{"user"}, destDir)).To(Succeed())
+			cfg := baseCfg()
+			cfg.HTTPFramework = config.HTTPFrameworkEcho
+			cfg.Services = []string{"user"}
+			Expect(bootstrap.Generate(cfg, destDir)).To(Succeed())
 			content, err := os.ReadFile(filepath.Join(destDir, "wire_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring("httpServer.Echo"))
 		})
 
 		It("uses the chi server's Router field", func() {
-			Expect(bootstrap.Generate("demo", config.HTTPFrameworkChi, []string{"user"}, destDir)).To(Succeed())
+			cfg := baseCfg()
+			cfg.HTTPFramework = config.HTTPFrameworkChi
+			cfg.Services = []string{"user"}
+			Expect(bootstrap.Generate(cfg, destDir)).To(Succeed())
 			content, err := os.ReadFile(filepath.Join(destDir, "wire_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring("httpServer.Router"))

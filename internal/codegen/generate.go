@@ -11,12 +11,16 @@ import (
 	"path/filepath"
 
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/bootstrap"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/cachegen"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/core"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/gengo"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/grpcgen"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/httpgen"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/memgen"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/mongogen"
 	sgoproto "github.com/wahyurudiyan/sunny-go/internal/codegen/proto"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/searchgen"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/sqlgen"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/wiregen"
 	"github.com/wahyurudiyan/sunny-go/internal/config"
 )
@@ -86,9 +90,17 @@ func GenerateCode(projectDir, name string, cfg *config.Config) error {
 		return err
 	}
 
+	if err := generateRealPersistence(cfg, file, p, projectDir); err != nil {
+		return err
+	}
+
+	if err := generateCacheAndSearch(cfg, projectDir); err != nil {
+		return err
+	}
+
 	addService(cfg, name)
 
-	if err := bootstrap.Generate(cfg.Module, cfg.HTTPFramework, cfg.Services, filepath.Join(projectDir, "internal", "bootstrap")); err != nil {
+	if err := bootstrap.Generate(cfg, filepath.Join(projectDir, "internal", "bootstrap")); err != nil {
 		return err
 	}
 
@@ -97,6 +109,64 @@ func GenerateCode(projectDir, name string, cfg *config.Config) error {
 	}
 
 	return gengo.TidyModule(projectDir)
+}
+
+// generateRealPersistence writes the real repository adapter for the
+// project's first selected persistence engine, if any — on top of the
+// in-memory one, which is always generated regardless (Decision #15).
+// bootstrap.Generate decides which one wire_gen.go actually uses.
+func generateRealPersistence(cfg *config.Config, file *sgoproto.File, p core.Paths, projectDir string) error {
+	if len(cfg.Persistence.Engines) == 0 {
+		return nil
+	}
+
+	engine := cfg.Persistence.Engines[0]
+	switch {
+	case sqlgen.Supports(engine):
+		destDir := filepath.Join(projectDir, "internal", "adapter", "out", "persistence", string(engine))
+		return sqlgen.Generate(engine, cfg.Persistence.Mode, file, p, destDir)
+	case engine == config.PersistenceEngineMongo:
+		destDir := filepath.Join(projectDir, "internal", "adapter", "out", "persistence", "mongo")
+		return mongogen.Generate(file, p, destDir)
+	default:
+		return fmt.Errorf("no persistence generator for engine %q", engine)
+	}
+}
+
+// generateCacheAndSearch writes the project-scoped (not per-entity)
+// cache/search ports and their adapters if sgo.yaml selects them.
+// Idempotent — safe to call on every `sgo generate code` run regardless
+// of which entity triggered it.
+func generateCacheAndSearch(cfg *config.Config, projectDir string) error {
+	portDir := filepath.Join(projectDir, "internal", "core", "port", "out")
+
+	for _, c := range cfg.Cache {
+		if c != config.CacheEngineRedis {
+			continue
+		}
+		if err := cachegen.GeneratePort(portDir); err != nil {
+			return err
+		}
+		destDir := filepath.Join(projectDir, "internal", "adapter", "out", "cache", "redis")
+		if err := cachegen.GenerateRedis(destDir); err != nil {
+			return err
+		}
+	}
+
+	for _, s := range cfg.Search {
+		if s != config.SearchEngineElasticsearch {
+			continue
+		}
+		if err := searchgen.GeneratePort(portDir); err != nil {
+			return err
+		}
+		destDir := filepath.Join(projectDir, "internal", "adapter", "out", "search", "elasticsearch")
+		if err := searchgen.GenerateElasticsearch(cfg.Module, destDir); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func addService(cfg *config.Config, name string) {

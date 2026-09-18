@@ -93,13 +93,15 @@ myservice/
 │   │   │       └── user_grpc_server_gen.go
 │   │   ├── out/
 │   │   │   ├── persistence/
-│   │   │   │   ├── memory/        # default until a real engine is selected — see §8.2
+│   │   │   │   ├── memory/        # always generated — the default; see §8.2
 │   │   │   │   │   └── user_repository_gen.go
-│   │   │   │   └── postgres/      # self-managed or ORM impl of the port (Phase 4)
+│   │   │   │   └── postgres/      # self-managed or ORM impl (only if selected)
+│   │   │   │       ├── user_repository_gen.go
+│   │   │   │       └── conn_gen.go
 │   │   │   ├── cache/
-│   │   │   │   └── redis/
+│   │   │   │   └── redis/         # cache_gen.go + conn_gen.go (only if selected)
 │   │   │   └── search/
-│   │   │       └── elasticsearch/
+│   │   │       └── elasticsearch/ # search_gen.go + conn_gen.go (only if selected)
 │   │   └── mapper/
 │   │       └── user_mapper_gen.go # wire↔domain conversions (generated)
 │   └── bootstrap/
@@ -298,47 +300,89 @@ only the Go code emitted for a given route differs per framework.
 ### 8.2 Persistence: self-managed vs. ORM
 
 - The driven port (`core/port/out/<entity>_repository.go`) is identical
-  regardless of mode — the core never knows which one is active. As of
-  Phase 2, it's generated as a fixed shape —
-  `Create/Get/List/Update/Delete`, all taking/returning the domain
-  entity — independent of the proto service's exact RPC names, since
-  trying to infer a repository shape from arbitrary RPC naming is more
-  fragile than just fixing the convention. The adapters described below
-  (self-managed/ORM, per datastore) are Phase 4, not yet built.
-- **In the meantime (Phase 3), every entity gets a generated in-memory
-  implementation** (`internal/adapter/out/persistence/memory/`, a
-  mutex-protected map) wired up by default in `wire_gen.go`, regardless
-  of what `sgo.yaml` selected. This isn't in the original plan — it exists
-  so a freshly generated project is runnable and demoable (real HTTP/gRPC
-  round trips, just without durable storage) before Phase 4's real
-  adapters exist, rather than starting a server with no working
-  persistence at all. Phase 4 replaces this as the default once a real
-  adapter for the selected engine exists.
-- **self-managed**: `database/sql` + `sqlx` (or `pgx` for Postgres) with
-  hand-written SQL. Scaffolded once as an owned file with example CRUD
-  queries; not regenerated wholesale after that (same rule as §6).
-- **orm**: GORM-backed implementation for the SQL family
-  (Postgres/MySQL). MongoDB uses the official `mongo-driver` in both
-  modes (there's no meaningful "raw vs ORM" split for a document store);
-  a lighter ODM layer is a possible future addition, not MVP.
+  regardless of mode — the core never knows which one is active. It's
+  generated as a fixed shape — `Create/Get/List/Update/Delete`, all
+  taking/returning the domain entity — independent of the proto
+  service's exact RPC names, since trying to infer a repository shape
+  from arbitrary RPC naming is more fragile than just fixing the
+  convention (Decision #11).
+- **Every entity always gets a generated in-memory implementation**
+  (`internal/adapter/out/persistence/memory/`, a mutex-protected map),
+  wired as the default in `wire_gen.go`. When `sgo.yaml` selects a real
+  persistence engine, `wire_gen.go` uses that adapter instead — see §12
+  for the "only the first selected engine" limitation. Keeping the
+  in-memory adapter generated even when a real one is selected costs
+  nothing and means a service is always runnable, demo-able, and
+  testable without a live database (Decision #15).
+- **self-managed** (`internal/codegen/sqlgen`, Postgres/MySQL): hand-written
+  SQL over `database/sql`, using `pgx`'s `database/sql` driver for
+  Postgres and `go-sql-driver/mysql` for MySQL. Fully regenerated on
+  every `sgo generate code` run — unlike the service skeleton, there's no
+  business logic here to protect, just CRUD SQL derived mechanically from
+  the entity's scalar fields (§12: message/repeated fields aren't
+  persisted).
+- **orm** (same package, GORM-backed): one shared pair of templates for
+  Postgres and MySQL, since GORM's query API is dialect-agnostic — only
+  the dialector import and DSN format differ (`gorm.io/driver/postgres`
+  vs `gorm.io/driver/mysql`). Each adapter defines its own **adapter-local
+  model type** (`<Entity>Model`, GORM struct tags) rather than adding
+  GORM tags to the domain struct — keeps `internal/core/domain` free of
+  any ORM dependency, consistent with the domain being decoupled from
+  wire types via the mapper (§5). `toModel`/`fromModel` do the
+  conversion, the same shape as the wire↔domain mapper.
+- **mongo** (`internal/codegen/mongogen`): the official
+  `go.mongodb.org/mongo-driver`, same treatment — an adapter-local
+  `<Entity>Document` type with `bson` tags, not domain struct tags.
+  There's no self-managed/ORM split for Mongo; a document store doesn't
+  have that distinction the way a SQL engine does.
+- **ids are UUIDs, not each engine's native auto-increment/ObjectID**
+  (Decision #17): the adapter calls `uuid.NewString()` before insert, for
+  every engine including memory. This is what lets `Create` have an
+  identical shape everywhere despite Postgres/MySQL/Mongo having very
+  different native id conventions, and matches the domain `Id` field
+  already being a plain `string`.
+- **`AutoMigrate`** (SQL only — Mongo is schemaless): self-managed mode
+  runs `CREATE TABLE IF NOT EXISTS`; ORM mode runs GORM's own
+  `db.AutoMigrate`. Called once from `wire_gen.go` at startup, so a
+  project works against a freshly created, empty database without a
+  separate migration step. This is the one thing self-managed mode does
+  generate/regenerate automatically rather than leaving entirely to the
+  developer — schema existence, not schema evolution.
 - Elasticsearch is **not** a persistence-port target — it gets its own
-  `search` port (`core/port/out/search.go`), separate from
-  `<entity>_repository`, since search queries aren't CRUD.
+  `search` port (`core/port/out/search.go`, `internal/codegen/searchgen`,
+  built on `esapi`), separate from `<entity>_repository`, since search
+  queries aren't CRUD.
 - Redis is **not** a persistence-port target either — it gets a `cache`
-  port (`core/port/out/cache.go`).
+  port (`core/port/out/cache.go`, `internal/codegen/cachegen`, built on
+  `github.com/redis/go-redis/v9`).
+- **Cache and search are generated but never auto-wired into a
+  service** (Decision #19): `wire_gen.go` connects a client for either
+  when `sgo.yaml` selects it, but doesn't pass it to any
+  `New<Entity>Service` call, since that would mean changing an owned
+  file's constructor signature — the one thing regeneration must never
+  do (§6). They're available infrastructure; wiring one into a specific
+  service's constructor is a deliberate choice the developer makes by
+  hand-editing that owned file.
 
-### 8.3 Datastore registry (tool-internal)
+### 8.3 Datastore generators (tool-internal)
+
+Rather than a separate `internal/registry/` package as originally
+sketched, each datastore got its own `internal/codegen/*gen` package,
+consistent with how `httpgen`/`grpcgen` are organized:
 
 ```
-internal/registry/
-  persistence.go   # postgres, mysql, mongo  → adapter + docker-compose service
-  cache.go         # redis                    → adapter + docker-compose service
-  search.go        # elasticsearch             → adapter + docker-compose service
+internal/codegen/
+  sqlgen/      # postgres, mysql (self-managed + orm, shared templates)
+  mongogen/    # mongo
+  cachegen/    # redis (+ the cache port)
+  searchgen/   # elasticsearch (+ the search port)
 ```
 
-Each registry entry supplies: the adapter template set, the
-`docker-compose.yml` service block, and the config keys `sgo.yaml`
-expects for that engine (DSN, host/port, etc.).
+`internal/codegen.GenerateCode` (the `sgo generate code` orchestrator)
+calls whichever of these `sgo.yaml` selects, alongside the always-on
+`memgen`. `bootstrap.Generate` is what actually *decides* which one
+`wire_gen.go` uses — see `resolvePersistence` in
+`internal/codegen/bootstrap`.
 
 ## 9. `sgo` tool-internal layout
 
@@ -456,6 +500,10 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
 | 14 | HTTP routes are derived from the RPC name prefix convention (`Create`/`Get`/`List`/`Update`/`Delete`), not `google.api.http` annotations. | Resolves what §12 originally left as an open question for Phase 3, in the direction that keeps the pure-Go, no-external-proto-dependency property from Decision #5 rather than reintroducing `googleapis` vendoring. |
 | 15 | Every entity gets a generated in-memory repository, wired as the default in `wire_gen.go` regardless of `sgo.yaml`'s persistence selection, until Phase 4 provides a real one. | A generated project should be runnable and demoable as soon as a service exists, not only after Phase 4 lands; the in-memory adapter is disposable scaffolding with an obvious, well-flagged replacement point. |
 | 16 | `service`, the chosen HTTP framework's package (`gin`/`echo`/`chi`), `grpcserver`, `memory`, and `mapper` each hold **every** entity's generated files under one shared Go package (one file per entity, e.g. `user_service.go` + `order_service.go` both in `package service`) — only `core/domain/<entity>` is genuinely per-entity-packaged. | Keeps `internal/bootstrap/wire_gen.go`'s imports to one per shared package regardless of how many entities exist, instead of one import alias per entity per layer; entity-prefixed type/function names (`UserRepository`, `RegisterUserRoutes`, ...) already prevent collisions within those shared packages. |
+| 17 | Persistence adapters generate a UUID (`google/uuid`) for `Id` before insert, on every engine including memory, instead of relying on each engine's native id mechanism (SQL auto-increment, Mongo `ObjectID`). | The domain `Id` field is already a plain `string` (§5); a UUID keeps `Create`'s shape and return value identical across every engine, and avoids `RETURNING`/`LastInsertId` handling that differs by SQL engine. |
+| 18 | GORM and Mongo adapters define an adapter-local model/document type (`<Entity>Model` with `gorm` tags, `<Entity>Document` with `bson` tags) instead of adding ORM/driver struct tags to the domain type. | Keeps `internal/core/domain` free of any persistence-framework dependency, the same principle already applied to protobuf wire types via the mapper (§5) — struct tags aren't an import, but they're still a coupling this design avoids on principle. |
+| 19 | Cache and search clients are connected in `wire_gen.go` when selected, but never passed into a `New<Entity>Service` call. | Auto-wiring either would mean changing an owned file's constructor signature — exactly what regeneration must never do (§6). They're available infrastructure; using one is a deliberate hand-edit to the owned service file, not something codegen decides for the developer. |
+| 20 | `wire_gen.go` uses only the **first** engine in `sgo.yaml`'s `persistence.engines` list, even though the schema (and `--db`) accept several. | The config model is project-wide, not per-entity — there's no way to say "entity A uses Postgres, entity B uses Mongo" without per-entity persistence config, which wasn't asked for. Picking the first entry is simple and predictable; documented as a limitation (§12) rather than silently ambiguous. |
 
 ## 12. Open questions
 
@@ -477,9 +525,33 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
   from the URL query string), so pagination only works if a caller POSTs
   a body to a list endpoint, which the CRUD convention doesn't route
   anyway. Worth adding when it's actually needed.
-- **ORM library choice** — GORM assumed above; alternatives (`bun`,
-  `sqlc` for a codegen-first approach) weren't ruled out, just not
-  selected. Worth revisiting before Phase 4.
+- ~~**ORM library choice**~~ — resolved: GORM, shared across Postgres and
+  MySQL (§8.2).
+- **`docker-compose.yml` env values aren't cross-wired to the adapters'
+  connection defaults.** Phase 1's compose file sets
+  `POSTGRES_USER`/`_PASSWORD`/`_DB` to the *project name*; the Phase 4
+  adapter's `Connect()` defaults to the generic `postgres`/`postgres`/
+  `postgres` (or engine-appropriate equivalent) if those env vars aren't
+  set. Running via `docker-compose up` today requires manually aligning
+  the two (or exporting the adapter's env vars to match the compose
+  file). Worth resolving by having both sides read from `sgo.yaml`
+  consistently.
+- **One active persistence engine per project, not per entity**
+  (Decision #20) — `sgo.yaml persistence.engines` and `--db` both accept
+  a list, but only the first entry is ever used. A project with Postgres
+  for one entity and Mongo for another isn't supported; would need
+  per-entity persistence config, which is a bigger schema change than
+  anything done so far.
+- **MySQL, MongoDB, and Elasticsearch adapters are compile-verified, not
+  live-tested** — this development environment has a real Postgres and
+  Redis installed locally but no MySQL/MongoDB/Elasticsearch and no
+  Docker daemon, so those three are verified by generating a throwaway
+  module and running `go build`/`go run` against the real client
+  libraries (catches signature/import mistakes — this is exactly how the
+  Mongo template's `bson.D{{"_id", 1}}` template-delimiter collision was
+  caught and fixed) rather than a live round trip against the actual
+  datastore. Worth a live pass in an environment that has them (or once
+  Docker's available here).
 - **Enum fields** — `internal/codegen/proto` maps `EnumKind` to a plain
   `int32` for now (see its `Kind.GoType`). No generated template
   exercises an enum field yet since the starter template doesn't declare

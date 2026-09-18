@@ -1,9 +1,11 @@
 // Package bootstrap generates internal/bootstrap/wire_gen.go, the
-// composition root that wires every generated service to the in-memory
-// repository (memgen) and starts both the HTTP (httpgen) and gRPC
-// (grpcgen) servers. It's regenerated on every `sgo generate code` run
-// so it always reflects the full current set of services — not just the
-// one just generated.
+// composition root that wires every generated service to a repository
+// (the real adapter sgo.yaml's persistence selection names, falling
+// back to the in-memory default — see ARCHITECTURE.md Decision #15) and
+// starts both the HTTP (httpgen) and gRPC (grpcgen) servers. It's
+// regenerated on every `sgo generate code` run so it always reflects the
+// full current set of services and the project's current selections —
+// not just the one entity just generated.
 package bootstrap
 
 import (
@@ -12,10 +14,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/cachegen"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/gengo"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/grpcgen"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/httpgen"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/memgen"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/mongogen"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/searchgen"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/sqlgen"
 	"github.com/wahyurudiyan/sunny-go/internal/config"
 )
 
@@ -33,32 +39,116 @@ type entityData struct {
 	Title string
 }
 
-// Generate writes internal/bootstrap/wire_gen.go, wiring every entity in
-// services.
-func Generate(module string, fw config.HTTPFramework, services []string, destDir string) error {
-	entities := make([]entityData, 0, len(services))
-	for _, s := range services {
+// Generate writes internal/bootstrap/wire_gen.go, wiring every service
+// in cfg.Services to the repository adapter cfg.Persistence names (or
+// the in-memory default if none is selected), plus a cache/search client
+// if cfg.Cache/cfg.Search name one — see ARCHITECTURE.md §8.2/§8.3.
+func Generate(cfg *config.Config, destDir string) error {
+	entities := make([]entityData, 0, len(cfg.Services))
+	for _, s := range cfg.Services {
 		entities = append(entities, entityData{Lower: s, Title: entityTitle(s)})
 	}
+
+	persistence := resolvePersistence(cfg)
 
 	data := struct {
 		HTTPImportPath    string
 		GRPCImportPath    string
-		MemoryImportPath  string
 		ServiceImportPath string
 		EngineField       string
 		Entities          []entityData
+
+		RepoPackage    string
+		RepoImportPath string
+		ConnArg        string
+		HasConnect     bool
+		ConnectExpr    string
+		MigrateExpr    string
+
+		UsesCache        bool
+		CacheImportPath  string
+		UsesSearch       bool
+		SearchImportPath string
 	}{
-		HTTPImportPath:    httpgen.ImportPath(module, fw),
-		GRPCImportPath:    grpcgen.ImportPath(module),
-		MemoryImportPath:  memgen.ImportPath(module),
-		ServiceImportPath: ServiceImportPath(module),
-		EngineField:       engineFields[fw],
+		HTTPImportPath:    httpgen.ImportPath(cfg.Module, cfg.HTTPFramework),
+		GRPCImportPath:    grpcgen.ImportPath(cfg.Module),
+		ServiceImportPath: ServiceImportPath(cfg.Module),
+		EngineField:       engineFields[cfg.HTTPFramework],
 		Entities:          entities,
+
+		RepoPackage:    persistence.pkg,
+		RepoImportPath: persistence.importPath,
+		ConnArg:        persistence.connArg,
+		HasConnect:     persistence.connectExpr != "",
+		ConnectExpr:    persistence.connectExpr,
+		MigrateExpr:    persistence.migrateExpr,
+	}
+
+	if hasEngine(cfg.Cache, config.CacheEngineRedis) {
+		data.UsesCache = true
+		data.CacheImportPath = cachegen.ImportPath(cfg.Module)
+	}
+	if hasEngine(cfg.Search, config.SearchEngineElasticsearch) {
+		data.UsesSearch = true
+		data.SearchImportPath = searchgen.ImportPath(cfg.Module)
 	}
 
 	destPath := filepath.Join(destDir, "wire_gen.go")
 	return gengo.Write(templatesFS, "templates/wire_gen.go.tmpl", data, destPath)
+}
+
+type persistenceChoice struct {
+	pkg         string // Go package identifier, e.g. "postgres", "memory"
+	importPath  string
+	connArg     string // argument to New<Entity>Repository(...); "" for memory
+	connectExpr string // e.g. "postgres.Connect(ctx)"; "" for memory (no connection needed)
+	migrateExpr string // e.g. "postgres.AutoMigrate(ctx, db)"; "" if not applicable
+}
+
+// resolvePersistence picks the first persistence engine cfg selected, in
+// the mode cfg.Persistence.Mode names, or falls back to the in-memory
+// default if none was selected.
+func resolvePersistence(cfg *config.Config) persistenceChoice {
+	if len(cfg.Persistence.Engines) == 0 {
+		return persistenceChoice{pkg: "memory", importPath: memgen.ImportPath(cfg.Module)}
+	}
+
+	engine := cfg.Persistence.Engines[0]
+
+	switch engine {
+	case config.PersistenceEnginePostgres, config.PersistenceEngineMySQL:
+		importPath := sqlgen.ImportPath(cfg.Module, engine)
+		pkg := string(engine)
+		if cfg.Persistence.Mode == config.PersistenceModeORM {
+			return persistenceChoice{
+				pkg: pkg, importPath: importPath, connArg: "db",
+				connectExpr: pkg + ".Connect()",
+				migrateExpr: pkg + ".AutoMigrate(db)",
+			}
+		}
+		return persistenceChoice{
+			pkg: pkg, importPath: importPath, connArg: "db",
+			connectExpr: pkg + ".Connect(ctx)",
+			migrateExpr: pkg + ".AutoMigrate(ctx, db)",
+		}
+	case config.PersistenceEngineMongo:
+		importPath := mongogen.ImportPath(cfg.Module)
+		return persistenceChoice{
+			pkg: "mongo", importPath: importPath, connArg: "db",
+			connectExpr: "mongo.Connect(ctx)",
+		}
+	default:
+		return persistenceChoice{pkg: "memory", importPath: memgen.ImportPath(cfg.Module)}
+	}
+}
+
+func hasEngine[T comparable](engines []T, want T) bool {
+	for _, e := range engines {
+		if e == want {
+			return true
+		}
+	}
+	return false
 }
 
 // ServiceImportPath is where every entity's service implementation

@@ -4,15 +4,14 @@
 a `.proto` contract, serving both HTTP and gRPC from a hexagonal
 (ports & adapters) core.
 
-> **Status:** in active development. `sgo init`, `sgo generate proto`,
-> and `sgo generate code` (below) are real and working, and a generated
-> project actually serves HTTP and gRPC once you implement its service —
-> the quick start is runnable today, not aspirational. Pluggable
-> persistence adapters (Postgres/MySQL/Mongo/Redis/Elasticsearch — a
-> generated service currently runs against an in-memory placeholder) and
-> the web UI are still ahead. See `docs/CLI.md` for exactly what's
-> implemented today vs. planned, and `PLAN.md` for the phase currently in
-> progress.
+> **Status:** in active development. `sgo init` and `sgo generate
+> {proto,code}` are real and working: a generated project serves HTTP and
+> gRPC once you implement its service, backed by a real Postgres, MySQL,
+> or MongoDB repository if you selected one (in-memory otherwise), plus
+> Redis/Elasticsearch clients if selected — the quick start is runnable
+> today, not aspirational. The web UI (`sgo ui`) is still ahead. See
+> `docs/CLI.md` for exactly what's implemented today vs. planned, and
+> `PLAN.md` for the phase currently in progress.
 
 - **`ARCHITECTURE.md`** — the target architecture: hexagonal layout,
   generated-vs-owned file strategy, pluggable HTTP frameworks and
@@ -48,10 +47,15 @@ and gRPC on `:9090`, both backed by the same service instance.
   backed by the same service implementation. Routes are derived from RPC
   naming (`Create`/`Get`/`List`/`Update`/`Delete`), not `google.api.http`
   annotations yet.
-- A generated in-memory repository so a service is runnable immediately;
-  pluggable *persistent* storage (self-managed or ORM) across Postgres,
-  MySQL, and MongoDB, plus Redis caching and Elasticsearch search
-  adapters, is next. *(planned — Phase 4)*
+- A generated in-memory repository so a service is always runnable, even
+  with nothing selected. If `sgo.yaml` selects one, the real adapter
+  instead: self-managed (hand-written SQL) or GORM for Postgres/MySQL,
+  the official driver for MongoDB — verified to actually persist data
+  across a server restart, not just compile. Redis caching and
+  Elasticsearch search clients are generated and connected if selected,
+  available for a service to use, though not auto-wired into one (that's
+  a constructor edit you make yourself, on purpose — see `ARCHITECTURE.md`
+  §8.2).
 - Regeneration that never deletes hand-written business logic — see
   `ARCHITECTURE.md` §6. Implemented and covered by an end-to-end test
   suite that edits a proto and asserts hand-written code survives

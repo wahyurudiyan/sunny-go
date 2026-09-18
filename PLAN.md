@@ -40,23 +40,33 @@ generator code left, `sgo.yaml` can be round-tripped (write → read →
 equal) under a passing Ginkgo suite, root README and Makefile accurate.
 All met on this branch.
 
-## Phase 1 — Project scaffolding (`sgo init`, non-interactive)
+## Phase 1 — Project scaffolding (`sgo init`, non-interactive) ✅
 
-- [ ] `sgo init <project> --http-framework <gin|echo|chi>
+- [x] `sgo init <project> --http-framework <gin|echo|chi>
       --persistence-mode <orm|self-managed> --db <postgres,mysql,...>
       --cache redis --search elasticsearch` (flags only, no wizard yet).
-- [ ] Directory scaffolding per ARCHITECTURE §3, conditioned on what was
+- [x] Directory scaffolding per ARCHITECTURE §3, conditioned on what was
       selected (no `mongo/` adapter dir if Mongo wasn't picked, etc.).
-- [ ] `go:embed`-based template engine in `internal/template`, replacing
-      the old string-constant approach.
-- [ ] `docker/docker-compose.yml` generated with only the datastore
+- [x] `go:embed`-based template engine in `internal/template`, replacing
+      the old string-constant approach. Used for the static files
+      (`go.mod`, `Makefile`, `Dockerfile`, `main.go`); `docker-compose.yml`
+      is instead built as a Go struct and marshaled with `yaml.Marshal` —
+      conditional service blocks in text/template got unreadable fast, and
+      a struct guarantees valid YAML for any combination of selections,
+      including zero datastores.
+- [x] `docker/docker-compose.yml` generated with only the datastore
       services actually selected.
-- [ ] `sgo.yaml` written with the resolved selections.
+- [x] `sgo.yaml` written with the resolved selections.
+- [x] Ginkgo specs for `internal/template` and
+      `internal/codegen/project`, including one that actually shells out
+      to `go build ./...` on a scaffolded project (the exit criterion
+      below, as a regression test, not a one-off manual check).
 
 **Exit criteria:** `sgo init demo --http-framework gin --persistence-mode
 orm --db postgres` produces a project that `go build`s (even though the
 core/domain/service is still empty at this point) and whose
-`docker-compose.yml` brings up exactly one Postgres service.
+`docker-compose.yml` brings up exactly one Postgres service. Verified
+both manually and by `internal/codegen/project`'s Ginkgo suite.
 
 ## Phase 2 — Proto → entities, ports, service skeletons
 

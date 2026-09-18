@@ -4,19 +4,20 @@ Target command surface for the architecture in `ARCHITECTURE.md`. Not all
 commands exist yet — see `PLAN.md` for phasing. Commands below marked
 **(planned)** don't exist on the current branch.
 
-## `sgo init`
+## `sgo init` ✅ (non-interactive)
 
 ```
-sgo init [project-name] [flags]
+sgo init <project-name> [flags]
 ```
 
-Scaffolds a new project (ARCHITECTURE §3) and writes `sgo.yaml`.
+Scaffolds a new project (ARCHITECTURE §3) and writes `sgo.yaml`. Fails if
+`<project-name>` already exists in the current directory.
 
+- Flags provided (or defaults accepted) → scaffolds directly, no
+  prompts. **Implemented, Phase 1.**
 - No flags, TTY attached → launches the interactive selection wizard
-  (ARCHITECTURE §10): project name/module, HTTP framework, persistence
-  mode, datastores. **(planned, Phase 5)**
-- Flags provided, or non-TTY → scaffolds directly, no prompts.
-  **(planned, Phase 1)**
+  (ARCHITECTURE §10) instead. **(planned, Phase 5)** — until then, `init`
+  is always the flag-driven path above, regardless of TTY.
 
 Flags:
 
@@ -28,9 +29,12 @@ Flags:
 | `--db` | comma list of `postgres`, `mysql`, `mongo` | none | |
 | `--cache` | comma list, currently only `redis` | none | |
 | `--search` | comma list, currently only `elasticsearch` | none | |
-| `--yes` | bool | `false` | Skip the wizard even with a TTY, use defaults/flags as given |
 
-Replaces the current `sunny create`/`sunny new`.
+`--yes` (to explicitly skip the wizard once it exists) is deferred to
+Phase 5 along with the wizard itself — there's nothing for it to skip
+yet.
+
+Replaces the old `sunny create`/`sunny new`.
 
 ## `sgo generate proto <name>`
 

@@ -64,9 +64,10 @@ myservice/
 ├── contract/
 │   ├── pb/                        # hand-authored .proto (source of truth)
 │   │   └── user.proto
-│   └── gen/                       # protoc/buf output — always regenerated
-│       ├── user.pb.go
-│       └── user_grpc.pb.go
+│   └── gen/                       # protoc-gen-go/-grpc output — always regenerated
+│       └── user/
+│           ├── user.pb.go
+│           └── user_grpc.pb.go
 ├── internal/
 │   ├── core/                      # the hexagon — no external deps
 │   │   ├── domain/
@@ -90,13 +91,15 @@ myservice/
 │   │   │   │       └── user_routes_gen.go
 │   │   │   └── grpc/
 │   │   │       └── user_grpc_server_gen.go
-│   │   └── out/
-│   │       ├── persistence/
-│   │       │   └── postgres/      # self-managed or ORM impl of the port
-│   │       ├── cache/
-│   │       │   └── redis/
-│   │       └── search/
-│   │           └── elasticsearch/
+│   │   ├── out/
+│   │   │   ├── persistence/
+│   │   │   │   └── postgres/      # self-managed or ORM impl of the port
+│   │   │   ├── cache/
+│   │   │   │   └── redis/
+│   │   │   └── search/
+│   │   │       └── elasticsearch/
+│   │   └── mapper/
+│   │       └── user_mapper_gen.go # wire↔domain conversions (generated)
 │   └── bootstrap/
 │       └── wire_gen.go            # composition root, built from sgo.yaml
 ├── cmd/
@@ -114,37 +117,70 @@ a `gin/` or `mongo/` directory.
 ## 4. Proto workflow
 
 - `sgo generate proto <name>` creates `contract/pb/<name>.proto` from a
-  starter template (service + CRUD-ish RPCs + `google.api.http` options),
-  following the project's hexagonal package layout conventions.
-- The developer edits the proto by hand.
+  starter template: one service with CRUD-shaped RPCs
+  (Create/Get/List/Update/Delete) and their request/response messages.
+  The starter deliberately has no imports (not even well-known types),
+  keeping the first-run experience simple; the compiler in the next step
+  supports imports if the developer adds them.
+- The developer edits the proto by hand — adds fields, adds/renames RPCs,
+  adds messages.
 - `sgo generate code <name>`:
-  1. Runs `buf build` (preferred) or `protoc --descriptor_set_out=-
-     --include_imports` to obtain a `FileDescriptorSet` for the edited
-     proto — not string/regex parsing.
-  2. Walks it with `google.golang.org/protobuf/reflect/protodesc` to get
-     messages, services, RPC methods, and `google.api.http` bindings.
-  3. Also runs the standard `protoc-gen-go` / `protoc-gen-go-grpc`
-     plugins into `contract/gen/` for the wire types.
-  4. Drives `text/template` codegen (see §6) for domain entities, ports,
-     service/handler skeletons, route registration, and the
-     wire↔domain mapper.
-- **Why buf over protoc-only:** built-in dependency management (no manual
-  `google/api/annotations.proto` vendoring), lint/breaking-change checks
-  for free, single `buf.gen.yaml` per project instead of long `protoc`
-  command lines. `sgo` requires `buf` on `PATH`; see
-  [Open questions](#9-open-questions).
+  1. Compiles `contract/pb/<name>.proto` with
+     [`bufbuild/protocompile`](https://github.com/bufbuild/protocompile),
+     a pure-Go parser/linker — **no `protoc` or `buf` binary required on
+     `PATH`.** This resolves the prerequisite question raised in the
+     original draft of this document (see Decisions #5, revised).
+  2. Walks the resulting `protoreflect.FileDescriptor` into a small
+     internal IR (`internal/codegen/proto`: `File`/`Message`/`Field`/
+     `Service`/`Method`) — messages, fields (with Go-mapped types), and
+     service RPCs.
+  3. Generates `contract/gen/<name>/*.pb.go` and `*_grpc.pb.go` by
+     building a real `CodeGeneratorRequest` from that descriptor and
+     piping it to the actual `protoc-gen-go` / `protoc-gen-go-grpc`
+     plugins (`internal/codegen/wiregen`) — run as `go run
+     <module>@<pinned-version>`, which works standalone regardless of the
+     caller's working directory. The only prerequisite is a Go toolchain,
+     which anyone using sgo to generate a Go project already has; no new
+     dependency is added beyond what generating Go code already implies.
+  4. Drives `text/template` codegen (`internal/codegen/core`) for the
+     domain entity, the usecase/repository ports, the service skeleton
+     (safely — see §6), and the wire↔domain mapper.
+  5. Runs `go mod tidy` in the project so the newly-imported
+     `google.golang.org/protobuf`/`google.golang.org/grpc` dependencies
+     are picked up automatically.
+- **Why protocompile + real plugins over shelling out to `buf`/`protoc`:**
+  no external binary prerequisite at all (not even a lighter one like
+  `protoc-gen-go` pre-installed) — `go run @version` fetches and caches
+  the plugin like any other Go module dependency. The generated
+  `contract/gen` output is byte-for-byte what `protoc`/`buf` would have
+  produced, since it's the same plugins doing the work; only the
+  descriptor-compilation front end differs.
+- **`google.api.http` / declarative HTTP-route annotations are not yet
+  supported** — the starter template avoids them so protocompile doesn't
+  need the `googleapis` proto dependencies vendored in. Phase 3 (HTTP
+  adapters) needs a decision here: either add those imports (and resolve
+  them via protocompile's resolver) or derive HTTP routes some other way
+  from the CRUD method names. Tracked as an open question below.
 
 ## 5. Entities
 
-- Defined once per proto message, generated into
-  `internal/core/domain/<entity>/<entity>_gen.go` — plain Go structs, no
-  protobuf types leaking into the core.
+- Every message declared in `<name>.proto` — not just the one matching
+  the entity's own name — gets a Go struct in
+  `internal/core/domain/<entity>/<entity>_gen.go`: the primary entity
+  (`User`) and its request/response DTOs (`CreateUserRequest`,
+  `UserResponse`, ...) alike. They're all "the domain's view of this
+  proto file," and the ports/service skeleton reference them by these
+  generated names. Field types are plain Go (`string`, `int32`, `[]byte`,
+  `*OtherMessage`, `[]*OtherMessage`, ...) — no protobuf types leak into
+  the core.
 - A sibling owned file (`<entity>.go`) is created once for domain methods
   (validation, invariants, computed properties) and never regenerated.
-- A generated mapper (`adapter/.../<entity>_mapper_gen.go`) converts
-  between `contract/gen` wire types and `core/domain` entities — this is
-  the anti-corruption layer, and it's always safe to regenerate because it
-  has no business logic, only field mapping.
+- A generated mapper (`internal/adapter/mapper/<entity>_mapper_gen.go`)
+  converts between `contract/gen` wire types and `core/domain` entities —
+  this is the anti-corruption layer, and it's always safe to regenerate
+  because it has no business logic, only field mapping (including
+  recursive mapping for nested/repeated message fields, e.g.
+  `ListUsersResponse.Users []*User`).
 
 ## 6. Safe regeneration strategy
 
@@ -158,16 +194,36 @@ on regen"):
    `os.Stat` before writing an owned file; if it exists, it's left alone.
 3. **New interface methods get appended, not merged in place.** When a
    port interface (`_gen.go`) gains a method that the owned implementation
-   file doesn't yet define, `sgo`:
-   - Parses the owned file with `go/parser` to get the receiver's current
-     method set.
-   - Diffs it against the port interface's method set.
-   - Appends a stub (`panic("sgo: TODO implement <Method>")`) for each
-     missing method to the end of the file, with a marker comment.
-   - Never deletes a method the interface no longer declares — it's left
-     in place with a `// sgo: <Method> is no longer part of <Interface>;
-     remove if unused` comment. Deleting code automatically is not a risk
-     worth taking.
+   file doesn't yet define, `sgo` (`internal/codegen/core.ensureMethods`):
+   - Parses the owned file with `go/parser` and walks its top-level
+     `*ast.FuncDecl`s, keeping those whose receiver type matches
+     (`*EntityService`), to get the receiver's current method set by name.
+   - Diffs that set against the port interface's current method set.
+   - For each interface method the file is missing, renders a stub
+     (`panic("sgo: TODO implement <Method>")`) from the same template used
+     for a first-time skeleton, and appends it to the end of the file.
+   - Never deletes a method the interface no longer declares. Instead, for
+     any *exported* method on the receiver whose name isn't in the current
+     interface (private helper methods are left alone entirely, since a
+     private method could never have satisfied an interface to begin
+     with), it inserts a one-line comment —
+     `// sgo: <Method> is no longer part of <Entity>UseCase; remove if
+     unused` — immediately above that method, once (checked for
+     idempotency before inserting, so re-running doesn't duplicate it on
+     every regen).
+   - The whole file is then run through `go/format.Source` once, so the
+     result is real gofmt output regardless of how the pieces were
+     assembled. Everything above the insertion/append points — including
+     the struct definition, constructor, and every untouched method
+     body — is copied through byte-for-byte; there's no AST-based
+     rewriting of existing code, only line-based insertion and append,
+     which is what makes the "never touches what's already there"
+     guarantee straightforward to keep.
+   - Verified end to end (not just at the unit level) by
+     `internal/codegen`'s Ginkgo suite: scaffold a project, generate code,
+     hand-write a method body, edit the `.proto` to add and remove RPCs,
+     regenerate, and assert both that the hand-written body survived and
+     that `go build` still succeeds on the whole project.
 4. **Field changes on entities are allowed to break the build.** If a
    proto field is removed, `<entity>_gen.go` drops it; code in the owned
    file that referenced it stops compiling. `sgo` does not attempt
@@ -227,7 +283,13 @@ generated, not shared code); the `Router` interface only needs to cover
 ### 8.2 Persistence: self-managed vs. ORM
 
 - The driven port (`core/port/out/<entity>_repository.go`) is identical
-  regardless of mode — the core never knows which one is active.
+  regardless of mode — the core never knows which one is active. As of
+  Phase 2, it's generated as a fixed shape —
+  `Create/Get/List/Update/Delete`, all taking/returning the domain
+  entity — independent of the proto service's exact RPC names, since
+  trying to infer a repository shape from arbitrary RPC naming is more
+  fragile than just fixing the convention. The adapters described below
+  (self-managed/ORM, per datastore) are Phase 4, not yet built.
 - **self-managed**: `database/sql` + `sqlx` (or `pgx` for Postgres) with
   hand-written SQL. Scaffolded once as an owned file with example CRUD
   queries; not regenerated wholesale after that (same rule as §6).
@@ -358,24 +420,34 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
 | 2 | Retire `internal/templates/` and `internal/generate/` rather than adapt them. | ~85% of the existing template code was already dead (see prior analysis); the new hexagonal layout and generated/owned file split are a different enough shape that adapting in place would cost more than a clean rebuild under `internal/codegen/`. |
 | 3 | Generated vs. owned code is split by **file**, not by AST-merged sections within one file. | Far lower risk of corrupting hand-written logic; the AST-append step is scoped to *adding missing method stubs only*, never rewriting existing bodies. |
 | 4 | Domain entities are hand-shaped Go structs, decoupled from protobuf wire types, mapped via a generated adapter-layer mapper. | Keeps `internal/core` free of protobuf dependencies, consistent with hexagonal architecture; wire format can evolve without forcing domain changes. |
-| 5 | `buf` is the primary proto toolchain; `protoc` remains available as a fallback. | Matches unused scaffolding already in the repo (`BufYamlTemplate`, `BufGenYamlTemplate`); better DX and no manual `googleapis` vendoring. |
+| 5 | ~~`buf` is the primary proto toolchain~~ **Revised (Phase 2):** descriptors are compiled with `bufbuild/protocompile` (pure Go); `contract/gen` is produced by running the real `protoc-gen-go`/`protoc-gen-go-grpc` plugins via `go run <module>@<version>`. No `buf` or `protoc` binary is required at all. | Fully resolves the "buf as a hard prerequisite" open question below rather than just picking a side: a Go toolchain is the only prerequisite, and it's one `sgo` already assumes (it generates Go code). Output is byte-identical to what `protoc`/`buf` would produce, since the same plugins do the generation. |
 | 6 | GORM for ORM-mode SQL persistence. | Most widely adopted Go ORM, supports both Postgres and MySQL, reduces the adapter surface area to build/maintain. |
 | 7 | Elasticsearch and Redis get their own ports (`search`, `cache`), not folded into the repository port. | Their access patterns (query DSL, key/TTL) don't fit a CRUD repository interface; forcing them into one would leak abstraction. |
 | 8 | Web UI reuses `internal/codegen`/`internal/config` via a REST API — no separate generation logic. | Avoids the CLI and web UI drifting into two different generators over time. |
+| 9 | `contract/gen` is per-entity (`contract/gen/<entity>/`), not flat. | A flat `contract/gen/` would force every entity's wire types into one Go package, risking name collisions between unrelated proto files' DTOs (two entities both having a `ListRequest`, say). Per-entity subpackages mirror `contract/pb`'s one-file-per-entity layout and match what `protoc-gen-go`'s `go_package` option naturally produces. |
+| 10 | Domain generation includes every message in the proto file, not just the one matching the entity name. | Request/response DTOs need domain-level structs too, for the usecase port's method signatures and the service skeleton — singling out only "the entity" message would leave nowhere for `CreateUserRequest` etc. to live on the domain side. |
+| 11 | The repository port (`out/<entity>_repository.go`) is a fixed `Create/Get/List/Update/Delete` shape, not derived from the proto service's literal RPC names. | Inferring a repository interface from arbitrary RPC naming (is `ArchiveUser` a delete? an update?) is guesswork; a fixed convention is predictable and still fully decoupled from the wire format, which is the property that actually matters for the port. |
+| 12 | Safe regeneration works by parsing the existing file with `go/parser` to find methods by receiver+name, then line-based insertion/append plus one whole-file `gofmt` pass — not full AST rewriting. | Line-based insertion only ever adds text at specific points and never reconstructs code that was already there, which is a much easier property to get right (and trust) than an AST rewrite that reprints the whole file from its tree. |
 
 ## 12. Open questions
 
-These don't block starting Phase 0, but should be settled before the
-phase that depends on them:
-
-- **`buf` as a hard prerequisite** — should `sgo` require `buf` on
-  `PATH` (documented prerequisite), or attempt to fetch/vendor it? MVP
-  assumes "documented prerequisite."
+- ~~**`buf` as a hard prerequisite**~~ — resolved by Decision #5: no
+  `buf`/`protoc` prerequisite at all.
+- **`google.api.http` support** — the starter proto template and the
+  descriptor walk don't handle `google.api.http` annotations yet (see
+  §4). Phase 3 (HTTP adapters) needs routes from somewhere: either add
+  proper support for that import (protocompile can resolve it, it just
+  needs the `googleapis` `.proto` files available to the resolver), or
+  derive HTTP routes from the CRUD RPC naming convention the starter
+  template already commits to. Worth deciding before Phase 3 starts.
 - **ORM library choice** — GORM assumed above; alternatives (`bun`,
   `sqlc` for a codegen-first approach) weren't ruled out, just not
   selected. Worth revisiting before Phase 4.
-- **TUI library** — `huh` assumed; confirm before Phase 5 if there's a
-  preference.
+- **Enum fields** — `internal/codegen/proto` maps `EnumKind` to a plain
+  `int32` for now (see its `Kind.GoType`). No generated template
+  exercises an enum field yet since the starter template doesn't declare
+  one; revisit if/when that's needed (typed enum constants + mapper
+  support would be the natural next step).
 - **Multi-service projects** — `sgo.yaml`'s `services` list assumes one
   `sgo init` per repo with multiple services generated into it via
   `sgo generate proto/code`. Monorepo-of-independent-modules is out of

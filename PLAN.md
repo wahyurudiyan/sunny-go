@@ -68,38 +68,91 @@ core/domain/service is still empty at this point) and whose
 `docker-compose.yml` brings up exactly one Postgres service. Verified
 both manually and by `internal/codegen/project`'s Ginkgo suite.
 
-## Phase 2 — Proto → entities, ports, service skeletons
+## Phase 2 — Proto → entities, ports, service skeletons ✅
 
 This is the heart of requirements #1–#3.
 
-- [ ] `sgo generate proto <name>` → `contract/pb/<name>.proto` scaffold.
-- [ ] `sgo generate code <name>`:
-  - [ ] `buf build` (fallback: `protoc --descriptor_set_out=-`) → descriptor.
-  - [ ] Walk descriptor via `protodesc`/`protoreflect`.
-  - [ ] Run `protoc-gen-go`/`protoc-gen-go-grpc` into `contract/gen/`.
-  - [ ] Generate `core/domain/<entity>/<entity>_gen.go` (fields) +
+- [x] `sgo generate proto <name>` → `contract/pb/<name>.proto` scaffold
+      (`internal/codegen/proto.GenerateStub`).
+- [x] `sgo generate code <name>` (`internal/codegen.GenerateCode`
+      orchestrates all of the below):
+  - [x] Compile with `bufbuild/protocompile` (pure Go — **not** `buf`/
+        `protoc`; see ARCHITECTURE §4 and Decision #5) → descriptor.
+  - [x] Walk the descriptor into an IR (`internal/codegen/proto`:
+        `File`/`Message`/`Field`/`Service`/`Method`) rather than working
+        with `protoreflect` directly everywhere else.
+  - [x] Run the real `protoc-gen-go`/`protoc-gen-go-grpc` plugins
+        (`internal/codegen/wiregen`, via `go run <module>@<pinned
+        version>`) into `contract/gen/<name>/`.
+  - [x] Generate `core/domain/<entity>/<entity>_gen.go` (every message in
+        the file, not just the entity itself — see ARCHITECTURE §5) +
         `<entity>.go` (owned, created once).
-  - [ ] Generate `core/port/in/<entity>_usecase.go` and
-        `core/port/out/<entity>_repository.go`.
-  - [ ] Generate `core/service/<entity>_service.go` (owned, created once
-        with panic-stub method bodies for each use-case method).
-  - [ ] Generate the wire↔domain mapper (`_gen.go`, always overwritten).
-- [ ] **Safe-regeneration**: implement the `go/parser`-based method-set
-      diff + stub-append described in ARCHITECTURE §6, with a Ginkgo spec
-      (`Describe("safe regeneration")` / `It("preserves a hand-written
-      method body across a second generate run")`) that asserts a
-      hand-edited method body survives a second `sgo generate code` run
-      after the proto gains a field/method. This is the regression test
-      for requirement #2, not a manual check.
-- [ ] `sgo list` updated to reflect proto → entity → service → generated
-      status per service (this already existed in a simpler form; keep
-      the UX, rewire the data source).
+  - [x] Generate `core/port/in/<entity>_usecase.go` (mirrors the proto
+        service's RPCs) and `core/port/out/<entity>_repository.go` (fixed
+        CRUD shape, see ARCHITECTURE §8.2 and Decision #11).
+  - [x] Generate `core/service/<entity>_service.go` (owned, created once
+        with panic-stub method bodies for each usecase method).
+  - [x] Generate the wire↔domain mapper
+        (`internal/adapter/mapper/<entity>_mapper_gen.go`, always
+        overwritten, including recursive mapping for nested/repeated
+        message fields).
+  - [x] Run `go mod tidy` in the project afterward so the
+        protobuf/grpc dependencies `contract/gen` now needs are picked up
+        automatically — the generated project builds without the
+        developer having to know to do this themselves.
+- [x] **Safe-regeneration**: implemented as described in ARCHITECTURE §6
+      (`internal/codegen/core.ensureMethods`) — `go/parser` to find
+      existing methods by receiver+name, line-based insertion for the
+      orphan-method warning comment, append for missing-method stubs, one
+      `gofmt` pass over the result. Covered by two layers of Ginkgo specs:
+      `internal/codegen/core`'s `Describe("safe regeneration")` (12
+      specs: first generation, no-op regen, new RPC appended, RPC
+      removed → orphan comment, comment not duplicated on a third run,
+      constructor/struct customization untouched) and
+      `internal/codegen`'s end-to-end suite, which does the same thing
+      through the real CLI-facing orchestrator and asserts `go build`
+      still succeeds on the assembled project — twice, once per
+      generation. This is the regression test for requirement #2, not a
+      manual check.
+- [x] `sgo list services` rewired: reads `sgo.yaml`'s `services` list
+      (populated by `sgo generate code`) and checks proto/contract-gen/
+      domain/service-file presence per service.
 
 **Exit criteria:** Editing a proto, running `generate code` twice, with a
 hand-written method body added after the first run, and having that body
-still present — verified in a test, not just by inspection.
+still present — verified in a test, not just by inspection. Met, and then
+some: also verified with a proto edit that both adds and removes an RPC
+in between the two runs, and with a real `go build` after each run, both
+at the unit level (`internal/codegen/core`) and end to end through the
+CLI-facing orchestrator (`internal/codegen`). Also verified manually
+through the actual `sgo` binary (scaffold a project, generate a service,
+hand-write `GetUser`, edit the proto to add a field and an RPC, `sgo
+generate code` again, confirm the hand-written body and the new field/RPC
+both show up and the project still builds).
+
+**Deviations from the original plan, and why:**
+- `buf`/`protoc` turned out to be avoidable entirely (Decision #5) rather
+  than just picking one as primary — a strictly better outcome than the
+  plan asked for, so worth calling out explicitly.
+- `google.api.http` HTTP-route annotations aren't supported yet; the
+  starter proto template avoids them so the pure-Go compiler doesn't need
+  the `googleapis` proto files vendored in. This becomes Phase 3's
+  problem — see ARCHITECTURE §12's open question on it.
+- `contract/gen` ended up per-entity (`contract/gen/<name>/`) rather than
+  flat, to avoid every entity's wire types colliding in one Go package
+  (Decision #9).
 
 ## Phase 3 — HTTP framework adapters
+
+**Depends on resolving ARCHITECTURE §12's `google.api.http` open
+question first** — Phase 2's descriptor walk does not currently capture
+HTTP route annotations (the starter proto template doesn't import them,
+deliberately, to keep the pure-Go compiler dependency-free for Phase 2).
+Either add that import and resolve it, or derive routes from the CRUD
+RPC-naming convention the starter template already commits to
+(Create→POST, Get→GET/{id}, List→GET, Update→PUT/{id}, Delete→DELETE/{id}
+is the obvious mapping, given every proto sgo scaffolds already follows
+it) — decide before starting the checklist below.
 
 - [ ] `Router` interface (ARCHITECTURE §8.1) + `internal/registry/http.go`.
 - [ ] Gin adapter (first, since it's the current `--http-framework`

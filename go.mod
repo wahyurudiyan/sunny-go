@@ -3,12 +3,14 @@ module github.com/wahyurudiyan/sunny-go
 go 1.25.0
 
 require (
+	github.com/bufbuild/protocompile v0.14.1
 	github.com/charmbracelet/huh v1.0.0
 	github.com/fatih/color v1.18.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/onsi/ginkgo/v2 v2.33.0
 	github.com/onsi/gomega v1.43.1
 	github.com/spf13/cobra v1.9.1
+	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 )
 

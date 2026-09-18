@@ -38,62 +38,80 @@ control" just as well.
 
 Replaces the old `sunny create`/`sunny new`.
 
-## `sgo generate proto <name>`
+## `sgo generate proto <name>` ✅
 
 ```
 sgo generate proto user
 ```
 
-Creates `contract/pb/user.proto` from a starter service+CRUD template.
-Fails if the file already exists (edit it directly, don't regenerate a
-proto over hand-written changes). **(planned, Phase 2)**
+Creates `contract/pb/user.proto` from a starter service+CRUD template
+(`CreateUser`/`GetUser`/`ListUsers`/`UpdateUser`/`DeleteUser` RPCs, no
+imports). Fails if the file already exists (edit it directly, don't
+regenerate a proto over hand-written changes). Must be run inside an sgo
+project (a directory with `sgo.yaml`) — the proto's `go_package` option
+is derived from the project's module path.
 
-## `sgo generate code <name>`
+## `sgo generate code <name>` ✅
 
 ```
 sgo generate code user
 ```
 
-Reads `contract/pb/user.proto`, regenerates:
+Compiles `contract/pb/user.proto` (via a pure-Go compiler — no `buf`/
+`protoc` needed, see ARCHITECTURE §4) and regenerates:
 
-- `contract/gen/*.pb.go`, `*_grpc.pb.go`
-- `internal/core/domain/user/user_gen.go`
-- `internal/core/port/in/user_usecase.go`,
-  `internal/core/port/out/user_repository.go`
-- HTTP route registration + gRPC server binding for the framework set in
-  `sgo.yaml`
-- the wire↔domain mapper
+- `contract/gen/user/*.pb.go`, `*_grpc.pb.go` — via the real
+  `protoc-gen-go`/`protoc-gen-go-grpc` plugins, run with `go run
+  <module>@<version>`
+- `internal/core/domain/user/user_gen.go` — a struct for every message in
+  the file
+- `internal/core/port/in/user_usecase.go` (mirrors the proto service's
+  RPCs), `internal/core/port/out/user_repository.go` (fixed
+  `Create/Get/List/Update/Delete` shape)
+- `internal/adapter/mapper/user_mapper_gen.go` — wire↔domain conversions
 
 ...and **creates, but never overwrites**, the owned files:
 `internal/core/domain/user/user.go`,
-`internal/core/service/user_service.go`. If the port interface gained
+`internal/core/service/user_service.go`. If the usecase port gained
 methods since the last run, stubs are appended to the owned service file
-instead of the whole file being rewritten — see ARCHITECTURE §6. Safe to
-run repeatedly. **(planned, Phase 2, HTTP wiring lands in Phase 3)**
+instead of the whole file being rewritten; if it lost one that was
+already implemented, that implementation is left in place with a warning
+comment, never deleted — see ARCHITECTURE §6. Safe to run repeatedly:
+covered by an end-to-end Ginkgo suite that edits the proto and asserts a
+hand-written method body survives, twice, with a real `go build` after
+each run.
 
-Supersedes the current `sunny generate contract proto` / `sunny generate
-api` / `sunny generate service` three-step flow — the new `generate code`
-is one step that does entity + ports + service + HTTP + gRPC together,
-because they all derive from the same proto walk.
+Finishes by running `go mod tidy` in the project, so the
+`google.golang.org/protobuf`/`google.golang.org/grpc` dependencies
+`contract/gen` now needs are picked up automatically, and records `user`
+in `sgo.yaml`'s `services` list.
 
-## `sgo list`
+HTTP route registration and gRPC server binding are **not** generated
+yet — that's Phase 3 (see `PLAN.md`).
+
+Supersedes the old `sunny generate contract proto` / `sunny generate
+api` / `sunny generate service` three-step flow — `generate code` is one
+step that does entity + ports + service + mapper together, because they
+all derive from the same proto walk. Unlike the old `sunny generate api`,
+this one actually reads the proto's contents.
+
+## `sgo list services` ✅
 
 ```
 sgo list services
 ```
 
-Lists services tracked in `sgo.yaml`, and for each: proto present?
-`contract/gen` up to date? owned service file present? Same UX as the
-current `sunny list services`, rewired to the new file layout.
+Lists services tracked in `sgo.yaml` (populated by `sgo generate code`),
+and for each: proto present? `contract/gen` present? domain entity
+present? service implementation present?
 
-## `sgo validate <proto-file>`
+## `sgo validate <proto-file>` — not yet implemented
 
-```
-sgo validate contract/pb/user.proto
-```
-
-Runs `buf build`/`protoc` against the file and reports errors. Same as
-current `sunny validate`.
+Not currently a command. Proto errors currently surface as part of
+`sgo generate code`'s compile step (clear, position-annotated messages —
+see `internal/codegen/proto.Compile`); a standalone `validate` that does
+only that step without generating anything is straightforward to add
+later if wanted, just not built yet.
 
 ## `sgo ui` **(planned, Phase 6)**
 

@@ -61,8 +61,28 @@ and gRPC on `:9090`, both backed by the same service instance.
   suite that edits a proto and asserts hand-written code survives
   regeneration, with a real `go build` after each run, plus a suite that
   builds and runs the compiled binary and drives a full HTTP CRUD cycle
-  against it.
+  against it, plus a suite that drives the actual `sgo` binary itself as
+  a subprocess through the whole quick-start flow above.
 
 ## Contributing / development
 
 See `PLAN.md` for the current phase and what's in scope for it.
+
+```
+make build   # bin/sgo
+make test    # go test ./... (Ginkgo specs)
+make dev     # go run ./cmd, no build step
+```
+
+Most specs are self-contained (they generate into a temp dir and either
+pattern-match the output or build/run a throwaway module). A handful hold
+generated Postgres/Redis adapters to a higher standard by running them
+against a real local instance: they dial `127.0.0.1:5432`/`:6379` first
+and skip gracefully (`Skip(...)`, not a failure) if nothing answers, so
+`make test` is safe with no services running at all. To actually exercise
+that path, start a local Postgres and Redis reachable with sgo's own
+generated-adapter defaults — user `postgres`, password `postgres`,
+database `postgres`, and no auth on Redis. MySQL, MongoDB, and
+Elasticsearch adapters are compile-verified instead (see
+`ARCHITECTURE.md` §12) since this project doesn't assume those are
+installed locally.

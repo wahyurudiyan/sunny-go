@@ -363,8 +363,18 @@ test hitting both the CLI command and the `/api` handler).
       committed `examples/` copy would just be a second copy that goes
       stale the moment nobody remembers to regenerate it — see
       ARCHITECTURE.md Decision #21.
-- [ ] Update root `README.md`, `ARCHITECTURE.md`, `docs/CLI.md` for drift
-      accumulated during Phases 1–6.
+- [x] Update root `README.md`, `ARCHITECTURE.md`, `docs/CLI.md` for drift
+      accumulated during Phases 1–6. `docs/CLI.md` held up, no changes
+      needed. `ARCHITECTURE.md` §9 (`sgo` tool-internal layout) was the
+      real drift: it was still the pre-Phase-0 design sketch
+      (`internal/cli`, `internal/registry`, a nested
+      `codegen/persistence/{postgres,mysql,mongo}` tree) rather than the
+      layout that actually landed — rewritten to match
+      `internal/commands`, `internal/config`, and one flat package per
+      generator (`sqlgen`, `mongogen`, `cachegen`, `searchgen`, ...).
+      README.md gained a short Development section (the live-Postgres/
+      Redis test assumptions weren't documented anywhere) and a mention
+      of the new CLI-subprocess e2e suite.
 
 ## Non-goals (for now)
 

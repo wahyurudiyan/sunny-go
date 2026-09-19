@@ -386,32 +386,44 @@ calls whichever of these `sgo.yaml` selects, alongside the always-on
 
 ## 9. `sgo` tool-internal layout
 
+This section originally sketched the intended layout before Phases 0–5
+built it; the table below is the layout as it actually landed; a few
+package names and boundaries changed along the way (`internal/cli` became
+`internal/commands`, persistence/cache/search split into their own
+per-engine packages instead of nesting under one `codegen/persistence`
+tree, and there's no `internal/registry` — `internal/config` owns the
+engine enums directly). `internal/webui` (§11) doesn't exist yet.
+
 ```
 internal/
-  cli/            # thin Cobra commands — no business logic
+  commands/       # Cobra commands (init, generate proto/code, list) — thin, calls codegen/config
   wizard/         # `sgo init` interactive selection UI (see §10)
-  webui/          # `sgo ui` — embedded web UI server (see §11)
-  config/         # sgo.yaml read/write + schema/validation
+  config/         # sgo.yaml read/write + schema/validation, incl. the engine enums
+  banner/         # the `sgo` ASCII banner shown in --help
+  template/       # shared text/template engine over go:embed template files, used by proto's stub
   codegen/
-    proto/        # proto scaffolding, buf/protoc invocation, descriptor walking
-    entity/       # domain entity gen (generated + owned split)
-    port/         # port interface gen
-    service/      # service skeleton gen + safe-append merge (go/parser)
-    http/
-      gin/ echo/ chi/
-    persistence/
-      postgres/ mysql/ mongo/
-    cache/redis/
-    search/elasticsearch/
-  registry/       # HTTPFrameworks, PersistenceEngines, CacheEngines, SearchEngines
-  template/       # shared text/template engine over go:embed template files
+    codegen.go       # GenerateCode: orchestrates every generator below for one entity
+    proto/           # proto scaffolding + protocompile-based compile/descriptor walk (no buf/protoc)
+    core/            # domain entity, usecase/repository ports, service skeleton (safe-append), mapper
+    wiregen/         # contract/gen via the real protoc-gen-go / protoc-gen-go-grpc plugins
+    httpgen/         # HTTP server + routes for the selected framework (gin/echo/chi)
+    grpcgen/         # gRPC server adapter
+    memgen/          # default in-memory repository (always generated, §6.4/Decision #15)
+    sqlgen/          # Postgres/MySQL repository, self-managed or GORM (§8.2)
+    mongogen/        # MongoDB repository (official driver, no mode split)
+    cachegen/        # Cache port + Redis adapter (project-scoped, §8.2/§8.3)
+    searchgen/       # Search port + Elasticsearch adapter (project-scoped, §8.2/§8.3)
+    bootstrap/       # internal/bootstrap/wire_gen.go for the generated project (composition root)
+    gengo/           # shared "render an embedded .tmpl, then gofmt" helper used by every *gen package
+    project/         # `sgo init`'s directory-tree + sgo.yaml scaffolder (§3, §7)
 ```
 
-**Templates move from Go string constants to `go:embed` `.tmpl` files**
-(`internal/codegen/**/templates/*.tmpl`), one per generated file kind.
-This replaces the ~2,600 lines of unused string-constant templates that
-used to live in `internal/templates/` (removed in Phase 0) and is far
-easier to review, diff, and extend than editing Go string literals.
+**Templates are `go:embed` `.tmpl` files**
+(`internal/codegen/**/templates/*.tmpl`), one per generated file kind, not
+Go string constants. This replaced the ~2,600 lines of unused
+string-constant templates that used to live in `internal/templates/`
+(removed in Phase 0) and is far easier to review, diff, and extend than
+editing Go string literals.
 
 ## 10. `sgo init` interactive selection UI
 
@@ -479,6 +491,17 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
   field) are expressed as multiple `Context`/`It` blocks rather than a
   `[]struct{...}` loop, so a failing case is reported with its own
   descriptive name instead of a row index.
+- Three layers, each holding generated code to a higher standard than the
+  one below it: (1) content-check specs that generate into a temp dir and
+  pattern-match the output; (2) specs that build a throwaway module
+  against the generated code and run it for real — against a real local
+  Postgres/Redis where this dev environment has one (`sqlgen`,
+  `cachegen`), or compile-only otherwise (MySQL/Mongo/Elasticsearch, see
+  §12); (3) `internal/commands/e2e_test.go` (Phase 7), which builds the
+  actual `sgo` binary and drives it as a subprocess through init →
+  generate proto → a hand-edit → generate code → `go build`, the only
+  spec in the repo exercising the CLI surface itself rather than
+  `internal/codegen`'s Go API.
 
 ## Decisions
 

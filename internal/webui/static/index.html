@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sgo</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>sgo</h1>
+  <span id="project-dir" class="muted"></span>
+</header>
+
+<main id="app">
+  <p class="muted">Loading…</p>
+</main>
+
+<template id="tpl-create-project">
+  <section class="panel">
+    <h2>Create a new project</h2>
+    <p class="muted">No <code>sgo.yaml</code> here yet. This scaffolds a new
+      project under this directory — the same thing <code>sgo init</code>
+      does on the command line.</p>
+    <form id="form-init">
+      <label>Project name
+        <input name="name" required placeholder="myservice" autocomplete="off">
+      </label>
+      <label>Go module path
+        <input name="module" placeholder="leave blank to use the project name" autocomplete="off">
+      </label>
+      <div class="row">
+        <label>HTTP framework
+          <select name="httpFramework">
+            <option value="gin" selected>Gin</option>
+            <option value="echo">Echo</option>
+            <option value="chi">Chi</option>
+          </select>
+        </label>
+        <label>Persistence mode
+          <select name="persistenceMode">
+            <option value="orm" selected>ORM</option>
+            <option value="self-managed">Self-managed</option>
+          </select>
+        </label>
+      </div>
+      <fieldset>
+        <legend>Datastores</legend>
+        <label class="checkbox"><input type="checkbox" name="db" value="postgres"> PostgreSQL</label>
+        <label class="checkbox"><input type="checkbox" name="db" value="mysql"> MySQL</label>
+        <label class="checkbox"><input type="checkbox" name="db" value="mongo"> MongoDB</label>
+      </fieldset>
+      <fieldset>
+        <legend>Extras</legend>
+        <label class="checkbox"><input type="checkbox" name="cache" value="redis"> Redis cache</label>
+        <label class="checkbox"><input type="checkbox" name="search" value="elasticsearch"> Elasticsearch search</label>
+      </fieldset>
+      <button type="submit">Create project</button>
+      <p class="error" data-role="error"></p>
+    </form>
+  </section>
+</template>
+
+<template id="tpl-dashboard">
+  <section class="panel">
+    <h2>Project</h2>
+    <dl class="config-summary" data-role="config-summary"></dl>
+    <details>
+      <summary>sgo.yaml</summary>
+      <form id="form-config">
+        <textarea name="yaml" spellcheck="false" rows="10"></textarea>
+        <button type="submit">Save sgo.yaml</button>
+        <p class="error" data-role="config-error"></p>
+      </form>
+    </details>
+  </section>
+
+  <section class="panel">
+    <h2>New service</h2>
+    <p class="muted">Scaffolds a starter proto — the same as <code>sgo generate proto &lt;name&gt;</code>.</p>
+    <form id="form-new-service">
+      <input name="name" required placeholder="product" autocomplete="off">
+      <button type="submit">Create proto</button>
+      <p class="error" data-role="new-service-error"></p>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Services</h2>
+    <div data-role="services"></div>
+  </section>
+</template>
+
+<template id="tpl-service-row">
+  <article class="service">
+    <header>
+      <h3 data-role="name"></h3>
+      <div class="checks" data-role="checks"></div>
+    </header>
+    <div class="actions">
+      <button data-action="generate">Generate code</button>
+      <button data-action="toggle-proto">View / edit proto</button>
+    </div>
+    <div class="proto-editor hidden" data-role="proto-editor">
+      <textarea spellcheck="false" rows="14"></textarea>
+      <button data-action="save-proto">Save proto</button>
+      <p class="error" data-role="proto-error"></p>
+    </div>
+    <p class="error" data-role="service-error"></p>
+  </article>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>

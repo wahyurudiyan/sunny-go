@@ -54,18 +54,20 @@ const SearchEngineElasticsearch SearchEngine = "elasticsearch"
 
 // Persistence holds the persistence-related selections for a project.
 type Persistence struct {
-	Mode    PersistenceMode     `yaml:"mode"`
-	Engines []PersistenceEngine `yaml:"engines,omitempty"`
+	Mode    PersistenceMode     `yaml:"mode" json:"mode"`
+	Engines []PersistenceEngine `yaml:"engines,omitempty" json:"engines,omitempty"`
 }
 
-// Config is the sgo.yaml project manifest.
+// Config is the sgo.yaml project manifest. JSON tags are for the web
+// UI's REST API (internal/webui), which serves this struct directly
+// rather than keeping a separate response shape in sync with it.
 type Config struct {
-	Module        string         `yaml:"module"`
-	HTTPFramework HTTPFramework  `yaml:"httpFramework"`
-	Persistence   Persistence    `yaml:"persistence"`
-	Cache         []CacheEngine  `yaml:"cache,omitempty"`
-	Search        []SearchEngine `yaml:"search,omitempty"`
-	Services      []string       `yaml:"services,omitempty"`
+	Module        string         `yaml:"module" json:"module"`
+	HTTPFramework HTTPFramework  `yaml:"httpFramework" json:"httpFramework"`
+	Persistence   Persistence    `yaml:"persistence" json:"persistence"`
+	Cache         []CacheEngine  `yaml:"cache,omitempty" json:"cache,omitempty"`
+	Search        []SearchEngine `yaml:"search,omitempty" json:"search,omitempty"`
+	Services      []string       `yaml:"services,omitempty" json:"services,omitempty"`
 }
 
 var (

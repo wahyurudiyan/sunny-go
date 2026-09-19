@@ -107,6 +107,18 @@ var _ = Describe("GenerateCode", func() {
 		Expect(err).To(MatchError(ContainSubstring("sgo generate proto order")))
 	})
 
+	It("surfaces a clear compile error for an invalid proto instead of panicking", func() {
+		cfg, err := config.Load(dir)
+		Expect(err).NotTo(HaveOccurred())
+
+		protoPath := filepath.Join(dir, "contract", "pb", "user.proto")
+		Expect(os.WriteFile(protoPath, []byte("this is not valid proto syntax {{{"), 0644)).To(Succeed())
+
+		err = codegen.GenerateCode(dir, "user", cfg)
+
+		Expect(err).To(MatchError(ContainSubstring("failed to compile")))
+	})
+
 	It("preserves hand-written business logic across a second run and still builds", func() {
 		cfg, err := config.Load(dir)
 		Expect(err).NotTo(HaveOccurred())
@@ -131,6 +143,88 @@ var _ = Describe("GenerateCode", func() {
 		content, err = os.ReadFile(servicePath)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(content)).To(ContainSubstring("s.repo.Get(ctx, req.Id)"))
+
+		cmd := exec.Command("go", "build", "./...")
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), string(out))
+	})
+})
+
+// Covers the generateCacheAndSearch and generateRealPersistence branches
+// that "generates everything..." above never exercises: Redis/
+// Elasticsearch selection and the Mongo persistence engine. None of
+// these need a live datastore — cache/search generation only writes the
+// port + adapter files (connecting happens in wire_gen.go at runtime,
+// not at generate time), and mongogen is compile-verified the same way
+// its own package suite is (see mongogen_test.go) rather than requiring
+// a live MongoDB.
+var _ = Describe("GenerateCode with cache, search, and Mongo selected", func() {
+	It("generates the Redis cache and Elasticsearch search adapters and still builds", func() {
+		root, err := os.MkdirTemp("", "sgo-codegen-cachesearch-test-*")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(os.RemoveAll(root)).To(Succeed()) })
+
+		dir := filepath.Join(root, "demo")
+		Expect(project.Scaffold(dir, project.Options{
+			Name:          "demo",
+			Module:        "demo",
+			HTTPFramework: config.HTTPFrameworkGin,
+			Cache:         []config.CacheEngine{config.CacheEngineRedis},
+			Search:        []config.SearchEngine{config.SearchEngineElasticsearch},
+		})).To(Succeed())
+		Expect(sgoproto.GenerateStub(filepath.Join(dir, "contract", "pb"), "user", "demo")).To(Succeed())
+
+		cfg, err := config.Load(dir)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
+
+		for _, f := range []string{
+			filepath.Join("internal", "core", "port", "out", "cache.go"),
+			filepath.Join("internal", "core", "port", "out", "search.go"),
+			filepath.Join("internal", "adapter", "out", "cache", "redis", "cache_gen.go"),
+			filepath.Join("internal", "adapter", "out", "cache", "redis", "conn_gen.go"),
+			filepath.Join("internal", "adapter", "out", "search", "elasticsearch", "search_gen.go"),
+			filepath.Join("internal", "adapter", "out", "search", "elasticsearch", "conn_gen.go"),
+		} {
+			Expect(filepath.Join(dir, f)).To(BeAnExistingFile(), f)
+		}
+
+		cmd := exec.Command("go", "build", "./...")
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), string(out))
+	})
+
+	It("generates the Mongo persistence adapter and still builds", func() {
+		root, err := os.MkdirTemp("", "sgo-codegen-mongo-test-*")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(os.RemoveAll(root)).To(Succeed()) })
+
+		dir := filepath.Join(root, "demo")
+		Expect(project.Scaffold(dir, project.Options{
+			Name:          "demo",
+			Module:        "demo",
+			HTTPFramework: config.HTTPFrameworkGin,
+			Persistence: config.Persistence{
+				Mode:    config.PersistenceModeORM,
+				Engines: []config.PersistenceEngine{config.PersistenceEngineMongo},
+			},
+		})).To(Succeed())
+		Expect(sgoproto.GenerateStub(filepath.Join(dir, "contract", "pb"), "user", "demo")).To(Succeed())
+
+		cfg, err := config.Load(dir)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
+
+		for _, f := range []string{
+			filepath.Join("internal", "adapter", "out", "persistence", "mongo", "user_repository_gen.go"),
+			filepath.Join("internal", "adapter", "out", "persistence", "mongo", "conn_gen.go"),
+		} {
+			Expect(filepath.Join(dir, f)).To(BeAnExistingFile(), f)
+		}
 
 		cmd := exec.Command("go", "build", "./...")
 		cmd.Dir = dir

@@ -117,4 +117,105 @@ var _ = Describe("Compile and Build", func() {
 		Expect(usersField.MessageType).To(Equal("User"))
 		Expect(usersField.GoType()).To(Equal("[]*User"))
 	})
+
+	It("returns nil for a message that doesn't exist", func() {
+		fd, err := proto.Compile(dir, "user.proto")
+		Expect(err).NotTo(HaveOccurred())
+
+		file, err := proto.Build(fd)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(file.FindMessage("NoSuchMessage")).To(BeNil())
+	})
+
+	It("returns a clear error for invalid proto syntax", func() {
+		Expect(os.WriteFile(filepath.Join(dir, "broken.proto"), []byte("not valid proto {{{"), 0644)).To(Succeed())
+
+		_, err := proto.Compile(dir, "broken.proto")
+
+		Expect(err).To(MatchError(ContainSubstring("failed to compile")))
+	})
+})
+
+// Exercises every scalar Kind (plus enum and a nested message), since the
+// CRUD starter template used by the specs above only ever declares
+// string/bool/int32-ish fields — mapKind and Kind.GoType() otherwise go
+// almost entirely untested for int64/uint32/uint64/float/double/bytes/
+// enum. Also the concrete answer to ARCHITECTURE.md's "Enum fields" open
+// question: an enum field compiles and maps to int32 like any other
+// integral kind, it's just never been exercised by a generated template.
+var _ = Describe("field kind mapping", func() {
+	var dir string
+
+	BeforeEach(func() {
+		var err error
+		dir, err = os.MkdirTemp("", "sgo-proto-kinds-test-*")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(os.RemoveAll(dir)).To(Succeed()) })
+
+		src := `syntax = "proto3";
+
+package kinds.v1;
+
+option go_package = "demo/contract/gen/kinds";
+
+enum Status {
+  STATUS_UNKNOWN = 0;
+  STATUS_ACTIVE = 1;
+}
+
+message Nested {
+  string value = 1;
+}
+
+message AllKinds {
+  string s = 1;
+  bool b = 2;
+  int32 i32 = 3;
+  int64 i64 = 4;
+  uint32 u32 = 5;
+  uint64 u64 = 6;
+  float f = 7;
+  double d = 8;
+  bytes by = 9;
+  Status status = 10;
+  Nested nested = 11;
+}
+`
+		Expect(os.WriteFile(filepath.Join(dir, "kinds.proto"), []byte(src), 0644)).To(Succeed())
+	})
+
+	It("maps every scalar kind, enum, and message field to its Go type", func() {
+		fd, err := proto.Compile(dir, "kinds.proto")
+		Expect(err).NotTo(HaveOccurred())
+
+		file, err := proto.Build(fd)
+		Expect(err).NotTo(HaveOccurred())
+
+		msg := file.FindMessage("AllKinds")
+		Expect(msg).NotTo(BeNil())
+
+		byName := map[string]proto.Field{}
+		for _, f := range msg.Fields {
+			byName[f.Name] = f
+		}
+
+		Expect(byName["s"].GoType()).To(Equal("string"))
+		Expect(byName["b"].GoType()).To(Equal("bool"))
+		Expect(byName["i32"].GoType()).To(Equal("int32"))
+		Expect(byName["i64"].GoType()).To(Equal("int64"))
+		Expect(byName["u32"].GoType()).To(Equal("uint32"))
+		Expect(byName["u64"].GoType()).To(Equal("uint64"))
+		Expect(byName["f"].GoType()).To(Equal("float32"))
+		Expect(byName["d"].GoType()).To(Equal("float64"))
+		Expect(byName["by"].GoType()).To(Equal("[]byte"))
+		Expect(byName["status"].Kind).To(Equal(proto.KindEnum))
+		Expect(byName["status"].GoType()).To(Equal("int32"))
+		Expect(byName["status"].IsMessage()).To(BeFalse())
+
+		nested := byName["nested"]
+		Expect(nested.IsMessage()).To(BeTrue())
+		Expect(nested.MessageType).To(Equal("Nested"))
+		Expect(nested.GoType()).To(Equal("*Nested"))
+	})
 })

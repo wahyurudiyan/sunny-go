@@ -552,11 +552,15 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
   caught and fixed) rather than a live round trip against the actual
   datastore. Worth a live pass in an environment that has them (or once
   Docker's available here).
-- **Enum fields** — `internal/codegen/proto` maps `EnumKind` to a plain
-  `int32` for now (see its `Kind.GoType`). No generated template
-  exercises an enum field yet since the starter template doesn't declare
-  one; revisit if/when that's needed (typed enum constants + mapper
-  support would be the natural next step).
+- ~~**Enum fields**~~ — confirmed working, not just theoretical:
+  `internal/codegen/proto` maps `EnumKind` to a plain `int32` (see its
+  `Kind.GoType`), and `proto/proto_test.go`'s "field kind mapping" spec
+  now compiles a proto with an enum field through `Compile`/`Build` and
+  asserts it maps correctly. The starter CRUD template still doesn't
+  declare an enum field itself, and nothing generates typed enum
+  constants (Go `int32` throughout, no `String()` method) — that's still
+  a possible future upgrade, just no longer an open question about
+  whether enum fields work at all.
 - **Multi-service projects** — `sgo.yaml`'s `services` list assumes one
   `sgo init` per repo with multiple services generated into it via
   `sgo generate proto/code`. Monorepo-of-independent-modules is out of

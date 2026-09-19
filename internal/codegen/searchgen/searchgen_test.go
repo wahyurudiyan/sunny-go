@@ -11,6 +11,12 @@ import (
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/searchgen"
 )
 
+var _ = Describe("ImportPath", func() {
+	It("joins the module path with the Elasticsearch adapter's package location", func() {
+		Expect(searchgen.ImportPath("demo")).To(Equal("demo/internal/adapter/out/search/elasticsearch"))
+	})
+})
+
 var _ = Describe("Generate", func() {
 	var root string
 

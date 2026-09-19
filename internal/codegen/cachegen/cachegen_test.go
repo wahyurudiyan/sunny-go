@@ -13,6 +13,12 @@ import (
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/cachegen"
 )
 
+var _ = Describe("ImportPath", func() {
+	It("joins the module path with the Redis adapter's package location", func() {
+		Expect(cachegen.ImportPath("demo")).To(Equal("demo/internal/adapter/out/cache/redis"))
+	})
+})
+
 var _ = Describe("Generate", func() {
 	var root string
 

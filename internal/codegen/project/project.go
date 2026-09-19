@@ -46,6 +46,48 @@ func ValidateName(name string) error {
 	return nil
 }
 
+// BuildOptions validates name and assembles Options from typed
+// selections — the one place that decides "is this a scaffoldable
+// project" from raw input, shared by the CLI (`sgo init`, which parses
+// its comma-separated flags into these slices first) and the web UI's
+// `POST /api/init` (which already has typed JSON arrays), so both
+// surfaces reject the same invalid input the same way rather than each
+// re-implementing this check. module defaults to name when empty.
+func BuildOptions(name, module string, httpFramework config.HTTPFramework, persistenceMode config.PersistenceMode, db []config.PersistenceEngine, cache []config.CacheEngine, search []config.SearchEngine) (*Options, error) {
+	if err := ValidateName(name); err != nil {
+		return nil, err
+	}
+
+	if module == "" {
+		module = name
+	}
+
+	opts := &Options{
+		Name:          name,
+		Module:        module,
+		HTTPFramework: httpFramework,
+		Persistence: config.Persistence{
+			Mode:    persistenceMode,
+			Engines: db,
+		},
+		Cache:  cache,
+		Search: search,
+	}
+
+	cfg := config.Config{
+		Module:        opts.Module,
+		HTTPFramework: opts.HTTPFramework,
+		Persistence:   opts.Persistence,
+		Cache:         opts.Cache,
+		Search:        opts.Search,
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	return opts, nil
+}
+
 // Scaffold creates the project directory tree under destDir and writes
 // sgo.yaml. destDir must not already exist.
 func Scaffold(destDir string, opts Options) error {

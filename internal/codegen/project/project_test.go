@@ -39,6 +39,53 @@ var _ = Describe("ValidateName", func() {
 	})
 })
 
+// BuildOptions is what `sgo init` (parsing comma-separated flags first)
+// and the web UI's POST /api/init (already holding typed JSON arrays)
+// both call, so a name/engine rejected here is rejected identically by
+// both surfaces.
+var _ = Describe("BuildOptions", func() {
+	It("defaults module to name when module is empty", func() {
+		opts, err := project.BuildOptions("shop", "", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(opts.Module).To(Equal("shop"))
+	})
+
+	It("keeps an explicitly given module", func() {
+		opts, err := project.BuildOptions("shop", "github.com/acme/shop", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(opts.Module).To(Equal("github.com/acme/shop"))
+	})
+
+	It("rejects an invalid name before anything else", func() {
+		_, err := project.BuildOptions("bad name", "", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil)
+		Expect(err).To(MatchError(ContainSubstring("invalid characters")))
+	})
+
+	It("rejects an invalid HTTP framework", func() {
+		_, err := project.BuildOptions("shop", "", config.HTTPFramework("fiber"), config.PersistenceModeORM, nil, nil, nil)
+		Expect(err).To(MatchError(ContainSubstring("invalid httpFramework")))
+	})
+
+	It("rejects an invalid persistence engine", func() {
+		_, err := project.BuildOptions("shop", "", config.HTTPFrameworkGin, config.PersistenceModeORM, []config.PersistenceEngine{"oracle"}, nil, nil)
+		Expect(err).To(MatchError(ContainSubstring("invalid persistence engine")))
+	})
+
+	It("carries persistence, cache, and search selections through", func() {
+		opts, err := project.BuildOptions("shop", "", config.HTTPFrameworkEcho, config.PersistenceModeSelfManaged,
+			[]config.PersistenceEngine{config.PersistenceEnginePostgres},
+			[]config.CacheEngine{config.CacheEngineRedis},
+			[]config.SearchEngine{config.SearchEngineElasticsearch},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(opts.HTTPFramework).To(Equal(config.HTTPFrameworkEcho))
+		Expect(opts.Persistence.Mode).To(Equal(config.PersistenceModeSelfManaged))
+		Expect(opts.Persistence.Engines).To(ConsistOf(config.PersistenceEnginePostgres))
+		Expect(opts.Cache).To(ConsistOf(config.CacheEngineRedis))
+		Expect(opts.Search).To(ConsistOf(config.SearchEngineElasticsearch))
+	})
+})
+
 var _ = Describe("Scaffold", func() {
 	var (
 		parentDir string

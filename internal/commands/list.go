@@ -3,9 +3,10 @@ package commands
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"github.com/wahyurudiyan/sunny-go/internal/codegen"
 )
 
 var listCmd = &cobra.Command{
@@ -58,22 +59,23 @@ func listServices() error {
 
 	fmt.Println("Services:")
 	for _, name := range cfg.Services {
+		s := codegen.Status(".", name)
 		fmt.Printf("  - %s\n", name)
-		printCheck("proto", filepath.Join("contract", "pb", name+".proto"))
-		printCheck("contract/gen", filepath.Join("contract", "gen", name))
-		printCheck("domain entity", filepath.Join("internal", "core", "domain", name))
-		printCheck("service implementation", filepath.Join("internal", "core", "service", name+"_service.go"))
+		printCheck("proto", s.Proto)
+		printCheck("contract/gen", s.ContractGen)
+		printCheck("domain entity", s.DomainEntity)
+		printCheck("service implementation", s.ServiceImpl)
 	}
 
 	return nil
 }
 
-func printCheck(label, path string) {
-	if _, err := os.Stat(path); err == nil {
+func printCheck(label string, ok bool) {
+	if ok {
 		fmt.Printf("    ✅ %s\n", label)
 		return
 	}
-	fmt.Printf("    ❌ %s (missing: %s)\n", label, path)
+	fmt.Printf("    ❌ %s\n", label)
 }
 
 func init() {

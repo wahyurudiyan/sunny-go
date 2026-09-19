@@ -94,39 +94,15 @@ func resolveInitOptions(cmd *cobra.Command, name string) (*project.Options, erro
 }
 
 func buildInitOptions(name string) (*project.Options, error) {
-	if err := project.ValidateName(name); err != nil {
-		return nil, err
-	}
-
-	module := initModule
-	if module == "" {
-		module = name
-	}
-
-	opts := &project.Options{
-		Name:          name,
-		Module:        module,
-		HTTPFramework: config.HTTPFramework(initHTTPFramework),
-		Persistence: config.Persistence{
-			Mode:    config.PersistenceMode(initPersistence),
-			Engines: splitEngines[config.PersistenceEngine](initDB),
-		},
-		Cache:  splitEngines[config.CacheEngine](initCache),
-		Search: splitEngines[config.SearchEngine](initSearch),
-	}
-
-	cfg := config.Config{
-		Module:        opts.Module,
-		HTTPFramework: opts.HTTPFramework,
-		Persistence:   opts.Persistence,
-		Cache:         opts.Cache,
-		Search:        opts.Search,
-	}
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-
-	return opts, nil
+	return project.BuildOptions(
+		name,
+		initModule,
+		config.HTTPFramework(initHTTPFramework),
+		config.PersistenceMode(initPersistence),
+		splitEngines[config.PersistenceEngine](initDB),
+		splitEngines[config.CacheEngine](initCache),
+		splitEngines[config.SearchEngine](initSearch),
+	)
 }
 
 // splitEngines parses a comma-separated flag value into a slice of T,

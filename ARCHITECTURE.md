@@ -392,12 +392,14 @@ package names and boundaries changed along the way (`internal/cli` became
 `internal/commands`, persistence/cache/search split into their own
 per-engine packages instead of nesting under one `codegen/persistence`
 tree, and there's no `internal/registry` — `internal/config` owns the
-engine enums directly). `internal/webui` (§11) doesn't exist yet.
+engine enums directly). `internal/webui` (§11, Phase 6) landed as
+sketched.
 
 ```
 internal/
-  commands/       # Cobra commands (init, generate proto/code, list) — thin, calls codegen/config
+  commands/       # Cobra commands (init, generate proto/code, list, ui) — thin, calls codegen/config/webui
   wizard/         # `sgo init` interactive selection UI (see §10)
+  webui/          # `sgo ui` — embedded web UI server + JSON API (see §11)
   config/         # sgo.yaml read/write + schema/validation, incl. the engine enums
   banner/         # the `sgo` ASCII banner shown in --help
   template/       # shared text/template engine over go:embed template files, used by proto's stub
@@ -444,24 +446,46 @@ function the non-interactive `sgo init --http-framework gin ...` flag
 path calls. `--yes`/flag-only invocation remains supported for CI/non-TTY
 use.
 
-## 11. `sgo ui` web mode
+## 11. `sgo ui` web mode ✅
 
-`sgo ui [--port 4747]` starts a **localhost-only** HTTP server (no
-external web framework dependency — the tool shouldn't take a stance on
-the same choice it offers the user) that serves:
+`sgo ui [--port 4747]` (`internal/commands/ui.go` + `internal/webui`)
+starts a **localhost-only** HTTP server (`net/http`, no external web
+framework dependency — the tool shouldn't take a stance on the same
+choice it offers the user) that serves:
 
-- An embedded static frontend (`go:embed`) for the same selections as the
-  terminal wizard, plus a project dashboard: services list, which files
-  are generated vs. owned, `sgo.yaml` viewer/editor.
-- A small REST API under `/api/*` that calls into `internal/codegen` and
-  `internal/config` directly — the web UI is a second frontend over the
-  same engine as the CLI, never a separate code path.
+- An embedded static frontend (`internal/webui/static/`, `go:embed`:
+  plain `index.html` + `app.js` + `style.css`, no build step or npm
+  dependency) covering the same selections as the terminal wizard for a
+  fresh directory, plus — once `sgo.yaml` exists — a project dashboard:
+  its config summary, an `sgo.yaml` raw-text viewer/editor, a services
+  list with generated-vs-owned status per service, a new-service
+  (`generate proto`-equivalent) form, and a raw proto viewer/editor per
+  service.
+- A small JSON API under `/api/*` (`internal/webui/handlers.go`) that
+  calls into `internal/codegen`, `internal/codegen/project`, and
+  `internal/config` directly, never shelling out to the `sgo` binary —
+  the web UI is a second frontend over the same engine as the CLI, never
+  a separate code path. `GET /api/state`, `POST /api/init`,
+  `GET`/`PUT /api/config`, `POST /api/services`,
+  `GET`/`PUT /api/services/{name}/proto`,
+  `POST /api/services/{name}/generate`.
+- One piece of server-side state: which directory it's currently
+  serving (`webui.Server.dir`, mutex-guarded). Starts as the directory
+  `sgo ui` was run from; a successful `POST /api/init` moves it to the
+  newly scaffolded project, mirroring `sgo init myservice && cd
+  myservice` without restarting the server.
 - No auth for MVP, since it binds to `127.0.0.1` only; revisit if remote
   access is ever requested.
 
-This is intentionally the last phase to build (see `PLAN.md`) — it
-depends on `internal/codegen` and `internal/config` being stable enough
-to have a real API surface.
+Verified two ways: `internal/commands/webui_parity_test.go` drives the
+real `sgo` binary and `internal/webui`'s handlers through the identical
+init → generate-proto → generate-code sequence on same-named projects
+and asserts byte-identical generated file trees (the strongest available
+proof the two surfaces share code, not two implementations that happen
+to agree); and a live pass through a real headless-Chromium browser via
+Playwright, screenshotted at each step (create-project form → dashboard
+→ service created → code generated → sgo.yaml/proto editors), confirming
+the DOM-rendering side actually works, not just the API it calls.
 
 ## Testing strategy
 
@@ -528,6 +552,9 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
 | 19 | Cache and search clients are connected in `wire_gen.go` when selected, but never passed into a `New<Entity>Service` call. | Auto-wiring either would mean changing an owned file's constructor signature — exactly what regeneration must never do (§6). They're available infrastructure; using one is a deliberate hand-edit to the owned service file, not something codegen decides for the developer. |
 | 20 | `wire_gen.go` uses only the **first** engine in `sgo.yaml`'s `persistence.engines` list, even though the schema (and `--db`) accept several. | The config model is project-wide, not per-entity — there's no way to say "entity A uses Postgres, entity B uses Mongo" without per-entity persistence config, which wasn't asked for. Picking the first entry is simple and predictable; documented as a limitation (§12) rather than silently ambiguous. |
 | 21 | No example project committed under `examples/`. Instead, `internal/commands/e2e_test.go` (Phase 7) generates a full project from scratch on every test run — init, a hand-edited proto, code generation, `go build` — and throws it away. | A committed example is a second copy of generator output that only stays honest if someone remembers to regenerate and re-commit it after every generator change; nothing would catch it silently drifting out of sync. Regenerating in CI on every run makes staleness structurally impossible instead of relying on discipline, at the cost of not having a project a GitHub visitor can browse without running `sgo` themselves — an acceptable trade for a CLI whose own README quick start already shows the exact commands to produce one. |
+| 22 | `sgo ui`'s frontend (`internal/webui/static/`) is plain HTML/CSS/JS with no framework, bundler, or npm dependency — hand-written `fetch()` calls and `<template>` cloning, not React/Vue/a build step. | Consistent with sgo never depending on the frameworks it only generates code referencing (§2): a Node/npm build toolchain to compile the tool's *own* UI would be a heavier, harder-to-audit dependency than the ~500 lines of vanilla JS it replaces, for a dashboard this small. |
+| 23 | `webui.Server` holds one piece of mutable, mutex-guarded state — the directory it's currently serving — rather than being stateless per request. A successful `POST /api/init` moves it from the directory `sgo ui` was started in to the newly scaffolded project. | Mirrors `sgo init myservice && cd myservice` in a single long-running process: without this, the dashboard that naturally follows creating a project would have nothing to show without restarting `sgo ui` pointed at the new directory. The alternative (a project-path parameter on every API call) would need the frontend to track and pass it everywhere for no real benefit, since one `sgo ui` process serving multiple unrelated projects at once isn't a use case anyone asked for. |
+| 24 | `internal/codegen/project.BuildOptions` and `internal/codegen.Status` were extracted from `internal/commands` (previously private `buildInitOptions`/inline `os.Stat` checks) specifically so the web UI's `POST /api/init` and `GET /api/state` could call the identical functions the CLI's `sgo init` and `sgo list services` call. | The Phase 6 exit criterion requires the CLI and web UI to share code paths, not just produce similar-looking output; a byte-for-byte parity test (`internal/commands/webui_parity_test.go`) is only honest to write once both surfaces genuinely call the same code, which required this extraction first. |
 
 ## 12. Open questions
 

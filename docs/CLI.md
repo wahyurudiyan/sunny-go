@@ -144,16 +144,33 @@ see `internal/codegen/proto.Compile`); a standalone `validate` that does
 only that step without generating anything is straightforward to add
 later if wanted, just not built yet.
 
-## `sgo ui` **(planned, Phase 6)**
+## `sgo ui` ✅
 
 ```
 sgo ui [--port 4747]
 ```
 
-Starts a localhost-only web UI (ARCHITECTURE §11) covering the same
-selections as `sgo init`'s wizard, plus a project dashboard (services,
-generated-vs-owned file status, `sgo.yaml` viewer/editor). Binds to
-`127.0.0.1` only.
+Starts a localhost-only web UI (ARCHITECTURE §11) at
+`http://127.0.0.1:<port>` (default `4747`). Run it from a directory with
+no `sgo.yaml` yet and it shows a create-project form covering the same
+selections as `sgo init`'s wizard; run it from inside an existing
+project and it shows a dashboard: the config summary, a raw `sgo.yaml`
+viewer/editor, a new-service form (`sgo generate proto` equivalent), a
+services list with generated-vs-owned status per service (proto /
+contract/gen / domain entity / service implementation), a
+"Generate code" button per service (`sgo generate code` equivalent), and
+a raw proto viewer/editor per service.
+
+Creating a project moves the server onto it, so the dashboard for the
+project you just created shows up immediately — no restart needed,
+equivalent to `sgo init myservice && cd myservice`.
+
+Every action calls the same `internal/codegen`/`internal/config`
+functions the CLI commands above call, never the `sgo` binary itself —
+verified by a test that drives both surfaces through the same sequence
+and asserts byte-identical generated output
+(`internal/commands/webui_parity_test.go`). No auth, since it never
+listens on anything but loopback.
 
 ## Removed/renamed from the current CLI
 

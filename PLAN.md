@@ -326,20 +326,43 @@ interaction itself isn't automated — driving a real bubbletea/huh form in
 CI needs a pty harness (e.g. `x/exp/teatest`), which isn't set up yet and
 wasn't worth blocking this phase on.
 
-## Phase 6 — Web UI mode
+## Phase 6 — Web UI mode ✅
 
-- [ ] `sgo ui [--port 4747]`: localhost HTTP server, `go:embed` static
-      frontend.
-- [ ] `/api/*` reusing `internal/codegen` + `internal/config` — init
-      wizard equivalent, `generate` trigger, `sgo.yaml` viewer/editor,
-      generated-vs-owned file status per service.
-- [ ] No auth (localhost-only binding); flagged as a later item if remote
-      access is ever requested.
+- [x] `sgo ui [--port 4747]`: localhost HTTP server (`internal/webui`),
+      `go:embed` static frontend (`internal/webui/static/`: plain HTML/
+      CSS/JS, no build step or npm dependency).
+- [x] `/api/*` reusing `internal/codegen` + `internal/codegen/project` +
+      `internal/config` directly (never shelling out to the `sgo`
+      binary) — init wizard equivalent (`POST /api/init`), `generate`
+      trigger (`POST /api/services`, `POST /api/services/{name}/generate`),
+      `sgo.yaml` viewer/editor (`GET`/`PUT /api/config`),
+      generated-vs-owned file status per service (`GET /api/state`, via
+      the new shared `codegen.Status`), plus a raw proto viewer/editor
+      (`GET`/`PUT /api/services/{name}/proto`) not originally itemized
+      but a natural extension of the same pattern.
+- [x] No auth (localhost-only binding, `127.0.0.1:<port>`); flagged as a
+      later item if remote access is ever requested.
 
-**Exit criteria:** `sgo ui` scaffolds a new project and runs
-`generate code` on an existing one entirely from the browser, calling
-the exact same code paths as the CLI (verified by one shared integration
-test hitting both the CLI command and the `/api` handler).
+**Exit criteria — met:** `sgo ui` scaffolds a new project and runs
+`generate code` on an existing one entirely from the browser (verified
+live: server started, driven through a real headless-Chromium browser
+via Playwright — form submission, service creation, code generation,
+the sgo.yaml and proto editors all screenshotted working end to end),
+calling the exact same code paths as the CLI. The "one shared
+integration test" requirement is `internal/commands/webui_parity_test.go`:
+it drives the real `sgo` binary through init → generate proto → generate
+code on one project and `internal/webui`'s handlers through the JSON
+equivalent on another (same project name, so directly comparable), then
+asserts the two produce **byte-identical** generated file trees — not
+just "both happened to work".
+
+Not originally itemized, added because they were necessary: extracting
+`project.BuildOptions` (shared name/config validation, previously
+private to `commands/init.go`) and `codegen.Status` (shared per-service
+status, previously inlined in `commands/list.go`) so the CLI and web UI
+could call literally the same functions instead of two implementations
+kept in sync by hand — this is also what made the parity test possible
+to write honestly.
 
 ## Phase 7 — Polish
 

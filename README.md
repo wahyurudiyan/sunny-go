@@ -4,14 +4,16 @@
 a `.proto` contract, serving both HTTP and gRPC from a hexagonal
 (ports & adapters) core.
 
-> **Status:** in active development. `sgo init` and `sgo generate
-> {proto,code}` are real and working: a generated project serves HTTP and
-> gRPC once you implement its service, backed by a real Postgres, MySQL,
-> or MongoDB repository if you selected one (in-memory otherwise), plus
-> Redis/Elasticsearch clients if selected — the quick start is runnable
-> today, not aspirational. The web UI (`sgo ui`) is still ahead. See
-> `docs/CLI.md` for exactly what's implemented today vs. planned, and
-> `PLAN.md` for the phase currently in progress.
+> **Status:** in active development. `sgo init`, `sgo generate
+> {proto,code}`, `sgo list services`, and `sgo ui` are all real and
+> working: a generated project serves HTTP and gRPC once you implement
+> its service, backed by a real Postgres, MySQL, or MongoDB repository if
+> you selected one (in-memory otherwise), plus Redis/Elasticsearch
+> clients if selected — the quick start is runnable today, not
+> aspirational. `sgo ui` covers the same ground from a browser instead of
+> the terminal, calling the identical `internal/codegen`/`internal/config`
+> functions the CLI does. See `docs/CLI.md` for exactly what's
+> implemented, and `PLAN.md` for what's left (just polish at this point).
 
 - **`ARCHITECTURE.md`** — the target architecture: hexagonal layout,
   generated-vs-owned file strategy, pluggable HTTP frameworks and

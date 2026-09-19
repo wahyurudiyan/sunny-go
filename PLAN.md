@@ -356,8 +356,13 @@ test hitting both the CLI command and the `/api` handler).
       repo that drives the actual compiled `sgo` binary as a subprocess,
       not internal/codegen's Go API directly, so flag parsing and each
       command's output are genuinely exercised.
-- [ ] Example project committed under `examples/` or generated in CI and
-      thrown away — pick one, don't do both.
+- [x] Example project committed under `examples/` or generated in CI and
+      thrown away — pick one, don't do both. Went with generated-in-CI:
+      `internal/commands/e2e_test.go` (added above) already generates a
+      full project from scratch and builds it on every run, so a
+      committed `examples/` copy would just be a second copy that goes
+      stale the moment nobody remembers to regenerate it — see
+      ARCHITECTURE.md Decision #21.
 - [ ] Update root `README.md`, `ARCHITECTURE.md`, `docs/CLI.md` for drift
       accumulated during Phases 1–6.
 

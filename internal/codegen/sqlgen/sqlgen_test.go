@@ -134,7 +134,8 @@ var _ = Describe("generated Postgres adapters, running for real", func() {
 				if err != nil { panic(err) }
 				fmt.Printf("got: %s %s\n", got.Name, got.Description)
 
-				repo.Create(ctx, &user.User{Name: "Grace", Description: "admiral"})
+				grace, err := repo.Create(ctx, &user.User{Name: "Grace", Description: "admiral"})
+				if err != nil { panic(err) }
 
 				items, total, err := repo.List(ctx, 0, 0)
 				if err != nil { panic(err) }
@@ -146,6 +147,7 @@ var _ = Describe("generated Postgres adapters, running for real", func() {
 				fmt.Printf("updated: %s\n", updated.Name)
 
 				if err := repo.Delete(ctx, created.Id); err != nil { panic(err) }
+				if err := repo.Delete(ctx, grace.Id); err != nil { panic(err) }
 
 				_, err = repo.Get(ctx, created.Id)
 				fmt.Printf("get after delete err is nil: %v\n", err == nil)
@@ -225,11 +227,16 @@ func runInModule(moduleDir, body, connectSnippet string) string {
 
 func dropUsersTable() {
 	GinkgoHelper()
-	// Best-effort cleanup between spec runs — the "users" table is shared
-	// across Entry() runs since both use the same local database, and
+	// Cleanup between spec runs — the "users" table is shared across
+	// Entry() runs since both use the same local database, and
 	// AutoMigrate only creates a table, it doesn't reset one that's
-	// already there from a previous run.
+	// already there from a previous run. This must not fail silently: a
+	// swallowed error here (e.g. the local "postgres" role's password
+	// doesn't match PGPASSWORD below) leaves stale rows that make later
+	// assertions fail with a confusing row-count mismatch instead of a
+	// clear connection error.
 	cmd := exec.Command("psql", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres", "-c", "DROP TABLE IF EXISTS users;")
 	cmd.Env = append(os.Environ(), "PGPASSWORD=postgres")
-	_ = cmd.Run()
+	out, err := cmd.CombinedOutput()
+	Expect(err).NotTo(HaveOccurred(), "cleanup of the \"users\" table failed, results would be unreliable: "+string(out))
 }

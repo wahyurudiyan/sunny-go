@@ -288,7 +288,8 @@ var _ = Describe("a generated project with Postgres selected, running for real",
 
 		dropCmd := exec.Command("psql", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres", "-c", "DROP TABLE IF EXISTS users;")
 		dropCmd.Env = append(os.Environ(), "PGPASSWORD=postgres")
-		_ = dropCmd.Run()
+		dropOut, err := dropCmd.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), "cleanup of the \"users\" table failed, results would be unreliable: "+string(dropOut))
 
 		root, err := os.MkdirTemp("", "sgo-codegen-postgres-test-*")
 		Expect(err).NotTo(HaveOccurred())

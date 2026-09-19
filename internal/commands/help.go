@@ -12,9 +12,9 @@ var helpCmd = &cobra.Command{
 sgo is an open-source CLI tool to bootstrap and evolve a Go service from a
 proto contract, serving both HTTP and gRPC from a hexagonal core.
 
-This build is mid-redesign; see ARCHITECTURE.md and PLAN.md in the
-repository root for the target command set (sgo init, sgo generate proto,
-sgo generate code, sgo ui, ...) and which phase is currently landing.
+See ARCHITECTURE.md and PLAN.md in the repository root for the full
+command set (sgo init, sgo generate proto, sgo generate code, sgo list
+services, sgo ui — planned) and design.
 
 Usage:
   sgo <command> [flags]

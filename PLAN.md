@@ -343,13 +343,19 @@ test hitting both the CLI command and the `/api` handler).
 
 ## Phase 7 — Polish
 
-- [ ] Ginkgo test coverage for the rest of `internal/codegen/*` (Phase 0
+- [x] Ginkgo test coverage for the rest of `internal/codegen/*` (Phase 0
       set the pattern via `internal/config`; everything since should
       already have specs — this item is about closing gaps, not starting
-      from zero).
-- [ ] End-to-end test: `sgo init` → `sgo generate proto` → edit proto →
+      from zero). Also fixed a real flaky-test bug found along the way:
+      `sqlgen_test.go`'s live-Postgres CRUD spec left a row behind
+      between `DescribeTable` entries, and its cleanup step silently
+      swallowed failures instead of surfacing them.
+- [x] End-to-end test: `sgo init` → `sgo generate proto` → edit proto →
       `sgo generate code` → `go build` the generated project in CI, as a
-      Ginkgo spec.
+      Ginkgo spec. `internal/commands/e2e_test.go` — the one spec in the
+      repo that drives the actual compiled `sgo` binary as a subprocess,
+      not internal/codegen's Go API directly, so flag parsing and each
+      command's output are genuinely exercised.
 - [ ] Example project committed under `examples/` or generated in CI and
       thrown away — pick one, don't do both.
 - [ ] Update root `README.md`, `ARCHITECTURE.md`, `docs/CLI.md` for drift

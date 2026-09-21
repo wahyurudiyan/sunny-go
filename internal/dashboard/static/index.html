@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sgo run --debug</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>sgo run <span class="badge">--debug</span></h1>
+  <span class="muted">Configuration in effect for the running service</span>
+</header>
+
+<main>
+  <p class="muted">Editing a writable value saves it to its source and restarts the service.
+    Values are hidden by default — use Reveal to view one.</p>
+
+  <table id="config-table">
+    <thead>
+      <tr><th>Key</th><th>Source</th><th>Value</th><th></th></tr>
+    </thead>
+    <tbody id="config-rows"></tbody>
+  </table>
+
+  <p id="empty" class="muted hidden">No configuration keys declared by any source yet.</p>
+  <p id="global-error" class="error"></p>
+</main>
+
+<template id="tpl-row">
+  <tr>
+    <td data-role="key"></td>
+    <td data-role="source"></td>
+    <td class="value-cell">
+      <span data-role="value" class="masked">••••••••</span>
+      <button data-action="reveal" class="link-btn">Reveal</button>
+    </td>
+    <td class="edit-cell">
+      <button data-action="edit" class="link-btn">Edit</button>
+      <form data-role="edit-form" class="hidden edit-form">
+        <input data-role="edit-input" autocomplete="off">
+        <button type="submit">Save</button>
+        <button type="button" data-action="cancel-edit">Cancel</button>
+      </form>
+      <p data-role="row-error" class="error"></p>
+    </td>
+  </tr>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>

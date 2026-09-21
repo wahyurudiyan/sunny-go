@@ -1,0 +1,128 @@
+:root {
+  color-scheme: light dark;
+  --bg: #0f1115;
+  --panel: #161922;
+  --border: #2a2f3a;
+  --text: #e6e8ee;
+  --muted: #8a90a0;
+  --accent: #5b8def;
+  --accent-text: #0b0d12;
+  --error: #e5675a;
+  --ok: #59b98a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  letter-spacing: 0.02em;
+}
+
+.badge {
+  font-size: 0.75rem;
+  color: var(--accent-text);
+  background: var(--accent);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  font-weight: 600;
+}
+
+main {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.muted { color: var(--muted); font-size: 0.9rem; }
+.hidden { display: none; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+th {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+td[data-role="source"] {
+  color: var(--muted);
+}
+
+.masked { letter-spacing: 0.1em; color: var(--muted); }
+
+.value-cell, .edit-cell { display: flex; align-items: center; gap: 0.5rem; }
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8rem;
+}
+.link-btn:hover { text-decoration: underline; }
+
+.edit-form {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+input, button {
+  font: inherit;
+  color: var(--text);
+  background: #0c0e13;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+}
+
+.edit-form button {
+  cursor: pointer;
+  background: var(--accent);
+  color: var(--accent-text);
+  border: none;
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+.edit-form button[type="button"] {
+  background: #232838;
+  color: var(--text);
+}
+
+.error {
+  color: var(--error);
+  font-size: 0.8rem;
+  min-height: 1.1em;
+  margin: 0.25rem 0 0;
+}

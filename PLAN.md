@@ -467,6 +467,111 @@ code: Python's `openapi-spec-validator` accepted the generated output
 for both version/format combinations by hand, in addition to the
 automated suite.
 
+## Phase 9 — Loading indicators **(planned)**
+
+Small, self-contained, and unrelated to Phase 10 other than sharing a
+terminal — sequenced first so it ships fast rather than waiting on the
+much bigger `sgo run` work. Full design in ARCHITECTURE.md §14.
+
+- [ ] `internal/progress`: a minimal terminal spinner (own
+      goroutine + ticker printing `\r<frame> <message>`, cleared on
+      completion) wrapping a blocking call — no new dependency; the
+      existing `charmbracelet/huh`/`bubbletea` stack is a heavier fit
+      for a single inline spinner than it's worth pulling into every
+      command.
+    - TTY-aware like the wizard already is (`isatty`): animates only
+      when stdout is a real terminal; otherwise prints a single
+      "<Verb>…" / "done" line so piped/CI/script output stays clean —
+      the same reasoning `sgo init`'s wizard-vs-flags branch already
+      uses (ARCHITECTURE.md §10).
+- [ ] Wire it into `sgo init` (scaffolding), `sgo generate proto`
+      (stub write), `sgo generate code` (the multi-step generator
+      pipeline — one spinner per stage, e.g. "Compiling proto…",
+      "Generating domain…", "Generating HTTP adapter…", not one spinner
+      for the whole command, so a slow step is visible), and
+      `sgo generate openapi` (recompiling every service + validating).
+- [ ] Ginkgo specs for `internal/progress` itself (non-TTY output shape,
+      completion clears the line) plus updated CLI e2e specs asserting
+      the plain (non-TTY, since `runSgo` pipes output) output shape
+      still contains the same success/failure text existing specs
+      already assert on.
+
+**Exit criteria:** every generation command shows visible progress on a
+real terminal, and piped/non-TTY output (what every existing CLI e2e
+spec already captures) is unchanged from today except for added
+per-stage status lines.
+
+## Phase 10 — `sgo run` and the `--debug` config dashboard **(planned)**
+
+Full design in ARCHITECTURE.md §15. Decided via `AskUserQuestion` before
+any code, same as Phase 8:
+
+- **v1 concretely implements one config source: `.env`.** Everything
+  else (a remote config repo, KMS/Vault-style secret managers) is a
+  defined, real Go interface (`envsource.Source`) with no concrete
+  adapter shipped yet — same shape sgo already uses for persistence/
+  cache/search engines (one interface, adapters added over time), not a
+  redesign later. No cloud SDK dependency added in this phase.
+- **"repo" as a config source means a separate, remote config
+  repository** (e.g. an org's central config repo), not a file already
+  sitting in the project — noted now so the eventual adapter's contract
+  is unambiguous, even though it isn't built yet.
+- **The `--debug` dashboard is fully read/write, including write-back to
+  whatever source a value came from** (the interface design reflects
+  this even though only `.env` write-back is real today) — not a
+  read-only viewer.
+- **The dashboard is a new view under `sgo run --debug`**, not folded
+  into `sgo ui` — a runtime/live-process concern, separate from `sgo
+  ui`'s project-scaffolding one.
+
+- [ ] **`envsource.Source` interface** (`Name`, `Fetch`, `Write`) plus
+      the one real implementation, `DotEnvSource` (parses/writes
+      `.env`, preserving line order; a `Write` on a source that can't
+      support it — a hypothetical future read-only adapter — returns a
+      clear error, never a silent no-op).
+- [ ] **`sgo run [--debug] [--debug-port 4748]`** — finds the project's
+      one `cmd/<name>/` (there's only ever one), merges `.env` values
+      under real OS environment variables (OS env wins — the same
+      convention most `.env` tooling uses, so a real prod/CI env var
+      already set is never silently shadowed by a leftover local
+      `.env`), and runs it via `go run ./cmd/<name>`, matching "runs
+      like go run" — no separate build-and-run-binary step to manage.
+- [ ] **Process supervisor** (`internal/run`): owns the child `go run`
+      process; `--debug` mode can kill and respawn it with a new merged
+      environment when the dashboard writes a change, instead of
+      requiring a manual Ctrl-C/rerun. Scoped to config-triggered
+      restarts only — not a general file-watching auto-reload tool
+      (nobody asked for that; revisit only if requested).
+- [ ] **The dashboard** (new package, `internal/rundebug` or similar,
+      same shape as `internal/webui`): `127.0.0.1`-only, no auth (same
+      stance as `sgo ui`, ARCHITECTURE.md §11). Shows every merged
+      key's current value, its source, and whether that source supports
+      writing; editing a writable value calls `Source.Write` then
+      triggers a supervised restart. Real-time updates over Server-Sent
+      Events (stdlib `net/http`, no new dependency) rather than polling
+      or a WebSocket library.
+    - **Secret values are masked by default** (a reveal toggle per
+      value, not shown-by-default) — flagged here as a default I'm
+      choosing, not asked about directly: a debug dashboard showing raw
+      secrets in a browser tab by default is a real shoulder-surfing/
+      screen-share risk for something meant to run during normal
+      day-to-day development.
+- [ ] Ginkgo specs: `envsource` (parse/write/precedence), the
+      supervisor's start/restart/stop lifecycle (against a tiny fixture
+      program, not a real generated service, for speed), the dashboard
+      API (httptest, same pattern as `internal/webui`'s suite), and a
+      real CLI e2e spec — build an actual generated project, `sgo run
+      --debug` it, hit the dashboard API, edit a value, and confirm the
+      child process actually saw the new environment on restart. Plus a
+      real-browser pass (Playwright/headless Chromium) for the
+      dashboard UI itself, the same standard `sgo ui` was held to.
+
+**Exit criteria:** `sgo run` on a generated project starts it with
+`.env` values loaded (OS env still wins); `sgo run --debug` additionally
+serves a dashboard where editing a `.env`-sourced value restarts the
+service with the new value in effect, verified against the real running
+child process, not just the dashboard's own state.
+
 ## Non-goals (for now)
 
 - Multi-service monorepo orchestration beyond one `sgo.yaml` per repo.
@@ -481,6 +586,15 @@ automated suite.
   supplied OpenAPI spec (contract testing) — the Phase 8 checker
   validates a document's own well-formedness, not code-vs-spec
   consistency. Revisit only if requested.
+- Concrete KMS/Vault/cloud-secret-manager and remote-config-repo
+  adapters — Phase 10 ships the `envsource.Source` interface and `.env`
+  only; building a real adapter needs a concrete provider choice and
+  real credentials to verify against, neither decided yet. Revisit once
+  a specific provider is requested.
+- General file-watching auto-reload (à la `air`/`nodemon`) for
+  `sgo run` — Phase 10's supervisor only restarts on a dashboard-driven
+  config change, nobody asked for source-file watching. Revisit only if
+  requested.
 
 ## Sequencing notes
 
@@ -499,3 +613,6 @@ automated suite.
   different story — once `sgo generate`/adapters exist, a dashboard
   showing their status is more useful, so it stays put unless the web UI
   becomes the priority over Phases 2–4 for some other reason.
+- Phase 9 (loading indicators) is independent of Phase 10 and much
+  smaller — sequenced first so it ships without waiting on the process
+  supervisor/dashboard work, not because Phase 10 depends on it.

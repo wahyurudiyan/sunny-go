@@ -1,0 +1,16 @@
+.PHONY: build clean test run dev
+
+build:
+	go build -o bin/{{.Name}} ./cmd/{{.Name}}
+
+clean:
+	rm -rf bin/
+
+test:
+	go test ./...
+
+run: build
+	./bin/{{.Name}}
+
+dev:
+	go run ./cmd/{{.Name}}

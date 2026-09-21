@@ -1,0 +1,220 @@
+// Package project scaffolds a new sgo project: the hexagonal directory
+// tree described in ARCHITECTURE.md §3, conditioned on the HTTP
+// framework, persistence mode, and datastores selected, plus the
+// sgo.yaml manifest (ARCHITECTURE.md §7).
+package project
+
+import (
+	"embed"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/bootstrap"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/gengo"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/httpgen"
+	"github.com/wahyurudiyan/sunny-go/internal/config"
+	sgotemplate "github.com/wahyurudiyan/sunny-go/internal/template"
+)
+
+//go:embed templates/*.tmpl
+var templatesFS embed.FS
+
+// Options describes the project to scaffold. It mirrors the selections
+// persisted to sgo.yaml.
+type Options struct {
+	Name          string
+	Module        string
+	HTTPFramework config.HTTPFramework
+	Persistence   config.Persistence
+	Cache         []config.CacheEngine
+	Search        []config.SearchEngine
+	OpenAPI       config.OpenAPI
+}
+
+// ValidateName checks that name is safe to use as both a directory name
+// and a Go package/binary name.
+func ValidateName(name string) error {
+	if name == "" {
+		return fmt.Errorf("project name cannot be empty")
+	}
+
+	if strings.ContainsAny(name, " /\\:*?\"<>|") {
+		return fmt.Errorf("project name contains invalid characters")
+	}
+
+	return nil
+}
+
+// BuildOptions validates name and assembles Options from typed
+// selections — the one place that decides "is this a scaffoldable
+// project" from raw input, shared by the CLI (`sgo init`, which parses
+// its comma-separated flags into these slices first) and the web UI's
+// `POST /api/init` (which already has typed JSON arrays), so both
+// surfaces reject the same invalid input the same way rather than each
+// re-implementing this check. module defaults to name when empty;
+// openapiVersion/openapiFormat default to config.DefaultOpenAPI() when
+// either is empty, so callers that don't care can pass zero values.
+func BuildOptions(name, module string, httpFramework config.HTTPFramework, persistenceMode config.PersistenceMode, db []config.PersistenceEngine, cache []config.CacheEngine, search []config.SearchEngine, openapiVersion config.OpenAPIVersion, openapiFormat config.OpenAPIFormat) (*Options, error) {
+	if err := ValidateName(name); err != nil {
+		return nil, err
+	}
+
+	if module == "" {
+		module = name
+	}
+
+	openapi := config.DefaultOpenAPI()
+	if openapiVersion != "" {
+		openapi.Version = openapiVersion
+	}
+	if openapiFormat != "" {
+		openapi.Format = openapiFormat
+	}
+
+	opts := &Options{
+		Name:          name,
+		Module:        module,
+		HTTPFramework: httpFramework,
+		Persistence: config.Persistence{
+			Mode:    persistenceMode,
+			Engines: db,
+		},
+		Cache:   cache,
+		Search:  search,
+		OpenAPI: openapi,
+	}
+
+	cfg := config.Config{
+		Module:        opts.Module,
+		HTTPFramework: opts.HTTPFramework,
+		Persistence:   opts.Persistence,
+		Cache:         opts.Cache,
+		Search:        opts.Search,
+		OpenAPI:       opts.OpenAPI,
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	return opts, nil
+}
+
+// Scaffold creates the project directory tree under destDir and writes
+// sgo.yaml. destDir must not already exist.
+func Scaffold(destDir string, opts Options) error {
+	if _, err := os.Stat(destDir); err == nil {
+		return fmt.Errorf("%s already exists", destDir)
+	}
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create project directory: %w", err)
+	}
+
+	if err := createDirectories(destDir, opts); err != nil {
+		return err
+	}
+
+	if err := renderFiles(destDir, opts); err != nil {
+		return err
+	}
+
+	if err := writeDockerCompose(destDir, opts); err != nil {
+		return err
+	}
+
+	httpDir := filepath.Join(destDir, "internal", "adapter", "in", "http", string(opts.HTTPFramework))
+	if err := httpgen.GenerateServer(opts.HTTPFramework, httpDir); err != nil {
+		return fmt.Errorf("failed to generate HTTP server boilerplate: %w", err)
+	}
+
+	// wire_gen.go at init time is intentionally minimal — no entities, no
+	// persistence/cache/search adapters, since `sgo generate code` hasn't
+	// created any of that yet. It's rewired on the first (and every
+	// later) `sgo generate code` run to reflect what actually exists.
+	bootstrapCfg := &config.Config{
+		Module:        opts.Module,
+		HTTPFramework: opts.HTTPFramework,
+		Persistence:   config.Persistence{Mode: opts.Persistence.Mode},
+	}
+	bootstrapDir := filepath.Join(destDir, "internal", "bootstrap")
+	if err := bootstrap.Generate(bootstrapCfg, bootstrapDir); err != nil {
+		return fmt.Errorf("failed to generate bootstrap: %w", err)
+	}
+
+	cfg := &config.Config{
+		Module:        opts.Module,
+		HTTPFramework: opts.HTTPFramework,
+		Persistence:   opts.Persistence,
+		Cache:         opts.Cache,
+		Search:        opts.Search,
+		OpenAPI:       opts.OpenAPI,
+	}
+	if err := cfg.Save(destDir); err != nil {
+		return fmt.Errorf("failed to write %s: %w", config.FileName, err)
+	}
+
+	return gengo.TidyModule(destDir)
+}
+
+func createDirectories(destDir string, opts Options) error {
+	dirs := []string{
+		filepath.Join("contract", "pb"),
+		filepath.Join("contract", "gen"),
+		filepath.Join("internal", "core", "domain"),
+		filepath.Join("internal", "core", "port", "in"),
+		filepath.Join("internal", "core", "port", "out"),
+		filepath.Join("internal", "core", "service"),
+		filepath.Join("internal", "adapter", "in", "http", string(opts.HTTPFramework)),
+		filepath.Join("internal", "adapter", "in", "grpc"),
+		filepath.Join("internal", "adapter", "out"),
+		filepath.Join("internal", "bootstrap"),
+		filepath.Join("cmd", opts.Name),
+		"docker",
+	}
+
+	for _, engine := range opts.Persistence.Engines {
+		dirs = append(dirs, filepath.Join("internal", "adapter", "out", "persistence", string(engine)))
+	}
+	for _, engine := range opts.Cache {
+		dirs = append(dirs, filepath.Join("internal", "adapter", "out", "cache", string(engine)))
+	}
+	for _, engine := range opts.Search {
+		dirs = append(dirs, filepath.Join("internal", "adapter", "out", "search", string(engine)))
+	}
+
+	for _, dir := range dirs {
+		if err := os.MkdirAll(filepath.Join(destDir, dir), 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+
+	return nil
+}
+
+func renderFiles(destDir string, opts Options) error {
+	engine := sgotemplate.New(templatesFS)
+	data := struct {
+		Name   string
+		Module string
+	}{
+		Name:   opts.Name,
+		Module: opts.Module,
+	}
+
+	files := map[string]string{
+		"templates/go.mod.tmpl":     filepath.Join(destDir, "go.mod"),
+		"templates/Makefile.tmpl":   filepath.Join(destDir, "Makefile"),
+		"templates/Dockerfile.tmpl": filepath.Join(destDir, "docker", "Dockerfile"),
+		"templates/main.go.tmpl":    filepath.Join(destDir, "cmd", opts.Name, "main.go"),
+	}
+
+	for templatePath, dest := range files {
+		if err := engine.Render(templatePath, data, dest); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

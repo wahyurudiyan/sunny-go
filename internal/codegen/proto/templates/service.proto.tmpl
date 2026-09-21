@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package {{.Name}}.v1;
+
+option go_package = "{{.Module}}/contract/gen/{{.Name}}";
+
+service {{.Entity}}Service {
+  rpc Create{{.Entity}}(Create{{.Entity}}Request) returns ({{.Entity}}Response);
+  rpc Get{{.Entity}}(Get{{.Entity}}Request) returns ({{.Entity}}Response);
+  rpc List{{.Entity}}s(List{{.Entity}}sRequest) returns (List{{.Entity}}sResponse);
+  rpc Update{{.Entity}}(Update{{.Entity}}Request) returns ({{.Entity}}Response);
+  rpc Delete{{.Entity}}(Delete{{.Entity}}Request) returns (Delete{{.Entity}}Response);
+}
+
+message {{.Entity}} {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+}
+
+message Create{{.Entity}}Request {
+  string name = 1;
+  string description = 2;
+}
+
+message Get{{.Entity}}Request {
+  string id = 1;
+}
+
+message List{{.Entity}}sRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message List{{.Entity}}sResponse {
+  repeated {{.Entity}} {{.Name}}s = 1;
+  int32 total = 2;
+}
+
+message Update{{.Entity}}Request {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+}
+
+message Delete{{.Entity}}Request {
+  string id = 1;
+}
+
+message Delete{{.Entity}}Response {
+  bool success = 1;
+}
+
+message {{.Entity}}Response {
+  {{.Entity}} {{.Name}} = 1;
+}

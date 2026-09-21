@@ -703,10 +703,117 @@ unchanged; a service with `(sgo.base_path)` set gets that prefix instead
 of the default `/api/v1`; every existing generated-project e2e spec
 still passes with no proto changes.
 
-## Phase 16 — Docs: README as a getting-started guide, CONTRIBUTING.md **(planned)**
+## Phase 16 — Repository-port methods beyond fixed CRUD **(planned)**
+
+Full design in ARCHITECTURE.md §21. Closes a real gap in the safe-
+regeneration story (§6): the usecase port (`internal/core/port/in/
+<entity>_usecase.go`) already grows a new method for free when you add
+an RPC to the proto and re-run `sgo generate code` — verified live
+against a real generated project before writing this: adding an
+`ArchiveUser` RPC produced `ArchiveUser` on the usecase interface and
+appended a matching stub to the owned `user_service.go`, with the
+hand-written `CreateUser` body untouched. But the repository port
+(`internal/core/port/out/<entity>_repository.go`) is *permanently*
+fixed at `Create/Get/List/Update/Delete` (Decision #11) — adding
+`ArchiveUser` to the proto left it exactly as it was. There is
+currently no supported way to add a repository method like
+`FindByEmail(ctx, email string) (*User, error)`; hand-editing the
+generated file works until the next `generate code` run silently
+reverts it, since nothing protects it the way owned files are
+protected.
+
+Two decisions locked in via `AskUserQuestion` before any code:
+**declaration is an option on an existing RPC**, not a new proto
+convention for method signatures outside the service's RPC list — reuses
+the RPC's own Request/Response message types rather than inventing a
+second way to express a typed method signature. And **the in-memory
+adapter auto-implements simple cases** (a single-field equality query
+becomes a generated linear scan) rather than requiring a hand-written
+stub everywhere, keeping local dev fully runnable with zero manual
+adapter edits for the common case — the same "always runnable" promise
+Decision #15 already makes for the fixed CRUD set.
+
+- [ ] **`option (sgo.repository_query) = true;`** on an RPC method —
+      extends the same vendored `sgo/options.proto` Phase 15 introduces
+      for `(sgo.base_path)` (one small vendored file, not two), this
+      time a `MethodOptions` extension. Marks that RPC as *also* needing
+      a repository-port counterpart, generated alongside its usual
+      usecase-port method, HTTP route, and gRPC method — by design, per
+      the decision above, this makes the RPC both a public endpoint and
+      a repository method, not repository-only.
+- [ ] **`option (sgo.hide_route) = true;`** — a second, independent
+      option on the same RPC that skips HTTP route registration for it
+      (still generates the gRPC method and, if also marked
+      `repository_query`, the repository counterpart). Cheap once the
+      options-plumbing from the first bullet exists, and closes the
+      "now it's forced to be a public HTTP endpoint too" tradeoff the
+      `AskUserQuestion` answer explicitly accepted — worth having rather
+      than leaving that as a flat limitation.
+- [ ] **Repository port generation** — for an RPC marked
+      `repository_query`, derive the method name by stripping the entity
+      name from the RPC name if it's a prefix (`FindUserByEmail` on
+      entity `User` → `FindByEmail`, matching the existing unprefixed
+      `Create`/`Get`/... convention), otherwise keep the RPC name as-is.
+      Parameters come from the request message's fields, flattened to
+      individual scalar Go parameters in declaration order (matching
+      `Get(ctx, id string)`'s existing style, not the usecase port's
+      opaque `*Request` style) — **v1 constraint, stated plainly rather
+      than silently unsupported**: every request field must be a scalar
+      (no nested messages); a nested-message field fails generation with
+      a clear error instead of guessing how to flatten it. Return type:
+      v1 only supports a response message shaped like the existing
+      single-entity wrapper (`UserResponse{ User user }`, the same shape
+      `Get`/`Create`/`Update` already use) — a list-shaped response
+      (pagination) isn't supported yet, logged as a Non-goal below.
+- [ ] **Real persistence engines (Postgres/MySQL/MongoDB)** — each
+      engine's adapter package gains a new *owned* companion file
+      alongside its existing generated one (e.g. `postgres/
+      user_repository.go` next to `postgres/user_repository_gen.go`),
+      created once with a `panic("sgo: TODO implement FindByEmail")`
+      stub per custom method, using the *exact same* append-only-new-
+      stubs mechanism (Decision #12) already proven for
+      `internal/core/service/<entity>_service.go` — a hand-written
+      implementation survives every later `generate code` run, and a
+      newly added custom method gets a fresh stub appended without
+      touching what's already there.
+- [ ] **In-memory adapter** — auto-implements a custom method when its
+      signature is exactly one scalar parameter whose name
+      case-insensitively matches an exported field on the domain entity
+      (`email string` → `Email` field): generates a linear scan
+      (`for _, e := range r.data { if e.Email == email { ... } }`)
+      directly in the generated (not owned) memory adapter file, no
+      hand-editing needed. Falls back to the same stub-in-an-owned-file
+      pattern the real engines use when it can't confidently infer the
+      mapping (more than one parameter, or no matching field) — fails
+      toward "you write it," never toward a guess that silently returns
+      wrong data.
+- [ ] Ginkgo specs: option parsing (a marked RPC produces the expected
+      repository method; an unmarked one doesn't); the nested-message
+      rejection with a clear error; the entity-prefix-stripping naming
+      rule; a full generate-code run per persistence engine asserting
+      the owned stub file's existence and content on first generation,
+      then that a hand-written implementation and a second custom method
+      both survive a second run (the two-survives-regeneration pattern
+      already used throughout `internal/codegen`'s existing suites);
+      the in-memory auto-implementation actually returning the right
+      entity for a simple case, and correctly falling back to a stub for
+      a multi-parameter one; `hide_route` actually suppressing the HTTP
+      route while leaving the gRPC method and repository counterpart
+      intact.
+
+**Exit criteria:** an RPC marked `(sgo.repository_query)` produces a
+matching method on the repository port; a hand-written implementation
+in each real engine's owned companion file survives regeneration, the
+same way `<entity>_service.go` already does; the in-memory adapter
+answers a simple single-field query correctly with zero hand-editing;
+an RPC additionally marked `(sgo.hide_route)` gets no HTTP route but
+keeps its gRPC method and repository counterpart; every existing
+generated-project e2e spec still passes with no proto changes.
+
+## Phase 17 — Docs: README as a getting-started guide, CONTRIBUTING.md **(planned)**
 
 Deliberately last in this batch — it should describe the layout,
-commands, and proto conventions Phases 11–15 actually land with, not
+commands, and proto conventions Phases 11–16 actually land with, not
 what's true today. Mechanical relative to the rest of this batch.
 
 - [ ] **README.md** restructured into a fuller guide: overview, install,
@@ -766,6 +873,19 @@ contradicts `docs/CLI.md` or the actual current layout.
   Phase 12's `layout:` only relocates *where* sgo's own fixed set of
   generated files land, it doesn't let someone add a wholly new kind of
   generated file. Nobody's asked for that yet.
+- A repository-only method that never becomes a public RPC — Phase 16's
+  declaration mechanism is deliberately an option on an existing RPC
+  (`AskUserQuestion`-confirmed), which always keeps that RPC's usecase
+  method, and its gRPC method unless a fundamentally different mechanism
+  is built later; `(sgo.hide_route)` only suppresses the HTTP route, not
+  the whole public surface. Revisit if a genuinely internal-only query
+  (no gRPC exposure either) turns out to be needed.
+- A custom repository method whose request message has a nested-message
+  field, or whose response is list-shaped (pagination) — Phase 16 only
+  flattens scalar request fields and only supports the existing single-
+  entity response wrapper shape (`Get`/`Create`/`Update`'s convention).
+  Both fail generation with a clear error rather than guessing. Revisit
+  if a real use case needs either.
 
 ## Sequencing notes
 
@@ -785,11 +905,11 @@ contradicts `docs/CLI.md` or the actual current layout.
   showing their status is more useful, so it stays put unless the web UI
   becomes the priority over Phases 2–4 for some other reason.
 - Phase 11 (wizard polish) ships first in this batch — small, and
-  entirely independent of 12–16.
+  entirely independent of 12–17.
 - Phase 12 (layout) is the riskiest and most novel piece of this batch —
   it touches every generator package that writes a file — so it's
   sequenced right after Phase 11 and before anything else in the batch:
-  Phases 13–15 all consume paths Phase 12 changes, and there's no reason
+  Phases 13–16 all consume paths Phase 12 changes, and there's no reason
   to build on top of a layout that might still move.
 - Phases 13 and 14 are independent of each other and of Phase 15;
   sequenced 13-then-14 only because `sgo list endpoints` is the smaller
@@ -802,6 +922,11 @@ contradicts `docs/CLI.md` or the actual current layout.
   for free (proto-defined routes show up in `sgo list endpoints` and
   generated OpenAPI docs without either needing changes) rather than the
   reverse.
-- Phase 16 (docs) is deliberately last — it documents the layout,
-  commands, and proto conventions Phases 11–15 land with, not a snapshot
+- Phase 16 (repository-port methods) is sequenced right after Phase 15,
+  not independently earlier, because it reuses the same vendored
+  `sgo/options.proto` file Phase 15 introduces (`(sgo.base_path)`) —
+  adding `(sgo.repository_query)`/`(sgo.hide_route)` to the same file
+  once, rather than vendoring proto-option infrastructure twice.
+- Phase 17 (docs) is deliberately last — it documents the layout,
+  commands, and proto conventions Phases 11–16 land with, not a snapshot
   from partway through.

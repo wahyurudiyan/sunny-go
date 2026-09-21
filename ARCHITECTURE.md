@@ -725,6 +725,92 @@ name check. `sgo generate openapi` (§13) and `sgo list endpoints` (§18)
 need no changes at all to pick this up — both already only consume
 `BuildRoutes`'s output.
 
+## 21. Repository-port methods beyond fixed CRUD **(planned, Phase 16)**
+
+Verified live before writing any of this section, not assumed: adding
+an `ArchiveUser` RPC to a real generated project's proto and re-running
+`sgo generate code` grew `ArchiveUser` on the usecase port
+automatically and appended a matching stub to the owned
+`user_service.go`, with the hand-written `CreateUser` body untouched —
+the usecase side of "add a method" already works exactly as you'd
+hope. The same test against the repository port
+(`internal/core/port/out/<entity>_repository.go`) confirmed Decision
+#11's fixed `Create/Get/List/Update/Delete` shape really is permanent:
+the new RPC changed nothing there. Hand-editing the generated file
+works until the next `generate code` run silently reverts it — nothing
+protects it the way `§6`'s owned files are protected. This section
+closes that gap.
+
+Two decisions locked in via `AskUserQuestion` before any code:
+
+- **Declaration is an option on an existing RPC**, not a new proto
+  convention for expressing a typed method signature outside a
+  service's RPC list. Reuses the RPC's own Request/Response message
+  types, the same source of typed shapes every other generator already
+  draws from — at the cost of that RPC also becoming a public HTTP/gRPC
+  endpoint by default (addressed below, not left as a flat limitation).
+- **The in-memory adapter auto-implements simple cases** rather than
+  requiring a hand-written stub everywhere — the same "always runnable,
+  zero hand-editing required" promise Decision #15 already makes for
+  the fixed CRUD set, extended to cover the common single-field-query
+  shape too.
+
+**`sgo/options.proto`** (vendored, §20/Phase 15) gains two
+`MethodOptions` extensions, alongside `(sgo.base_path)`'s
+`ServiceOptions` one — one small vendored file serving both features,
+not two:
+
+- **`option (sgo.repository_query) = true;`** — marks the RPC as also
+  needing a repository-port counterpart, generated alongside its usual
+  usecase-port method, HTTP route, and gRPC method.
+- **`option (sgo.hide_route) = true;`** — independently skips HTTP
+  route registration for that RPC (its gRPC method and, if also marked
+  `repository_query`, its repository counterpart are unaffected). Cheap
+  once the first option's plumbing exists, and meaningfully narrows the
+  "now it's forced to be a public HTTP endpoint too" tradeoff the
+  declaration decision above accepts, without inventing a second
+  declaration mechanism just to avoid it.
+
+**Repository port generation.** For an RPC marked `repository_query`:
+the method name strips the entity name from the RPC name when it's a
+prefix (`FindUserByEmail` on entity `User` → `FindByEmail`, matching
+the existing unprefixed `Create`/`Get`/`List`/`Update`/`Delete`
+convention already on this interface) and otherwise keeps the RPC name
+as-is. Parameters are the request message's fields, flattened to
+individual scalar Go parameters in declaration order — matching this
+port's existing style (`Get(ctx, id string)`, not the usecase port's
+opaque `*Request` style). **v1 constraint, stated rather than silently
+unsupported:** every request field must be scalar; a nested-message
+field fails generation with a clear error instead of guessing how to
+flatten it. The return type reuses the existing single-entity response
+wrapper shape (`UserResponse{ User user }`, what `Get`/`Create`/
+`Update` already produce) — a list-shaped (paginated) response isn't
+supported yet (PLAN.md Non-goals).
+
+**Real engines (Postgres/MySQL/MongoDB)** can't have actual query logic
+auto-generated — sgo has no way to know what SQL a `FindByEmail` needs.
+Each engine's adapter package gains a new *owned* companion file next
+to its existing generated one (`postgres/user_repository.go` beside
+`postgres/user_repository_gen.go`), using the exact append-only-new-
+stubs mechanism (Decision #12) `internal/core/service/<entity>_service.go`
+already relies on — created once with a `panic("sgo: TODO implement
+FindByEmail")` stub, a hand-written implementation survives every later
+regeneration, and a newly added custom method gets a fresh stub
+appended without touching what's already there. This is the same
+generated/owned file-split principle (§6) applied one layer lower than
+it's used today, not a new mechanism.
+
+**The in-memory adapter** is the one place a custom method can be
+auto-implemented rather than stubbed: when its signature is exactly one
+scalar parameter whose name case-insensitively matches an exported
+field on the domain entity (`email string` → the `Email` field), sgo
+generates a linear scan (`for _, e := range r.data { if e.Email ==
+email { return cloneOf(e), nil } } return nil, ErrNotFound`) directly
+in the generated (not owned) memory adapter file. Anything it can't
+confidently map — more than one parameter, or no matching field — falls
+back to the same owned-stub pattern the real engines use, rather than
+guessing at a mapping that could silently return wrong data.
+
 ## Testing strategy
 
 All Go tests — in `sgo` itself and in what it generates — are
@@ -779,7 +865,7 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
 | 8 | Web UI reuses `internal/codegen`/`internal/config` via a REST API — no separate generation logic. | Avoids the CLI and web UI drifting into two different generators over time. |
 | 9 | `contract/gen` is per-entity (`contract/gen/<entity>/`), not flat. | A flat `contract/gen/` would force every entity's wire types into one Go package, risking name collisions between unrelated proto files' DTOs (two entities both having a `ListRequest`, say). Per-entity subpackages mirror `contract/pb`'s one-file-per-entity layout and match what `protoc-gen-go`'s `go_package` option naturally produces. |
 | 10 | Domain generation includes every message in the proto file, not just the one matching the entity name. | Request/response DTOs need domain-level structs too, for the usecase port's method signatures and the service skeleton — singling out only "the entity" message would leave nowhere for `CreateUserRequest` etc. to live on the domain side. |
-| 11 | The repository port (`out/<entity>_repository.go`) is a fixed `Create/Get/List/Update/Delete` shape, not derived from the proto service's literal RPC names. | Inferring a repository interface from arbitrary RPC naming (is `ArchiveUser` a delete? an update?) is guesswork; a fixed convention is predictable and still fully decoupled from the wire format, which is the property that actually matters for the port. |
+| 11 | The repository port (`out/<entity>_repository.go`) is a fixed `Create/Get/List/Update/Delete` shape, not derived from the proto service's literal RPC names. **§21 (Phase 16, planned)** adds an explicit, opt-in way to extend it (`(sgo.repository_query)`) — this decision still holds for anything not opted in; nothing is inferred from RPC naming alone. | Inferring a repository interface from arbitrary RPC naming (is `ArchiveUser` a delete? an update?) is guesswork; a fixed convention is predictable and still fully decoupled from the wire format, which is the property that actually matters for the port. |
 | 12 | Safe regeneration works by parsing the existing file with `go/parser` to find methods by receiver+name, then line-based insertion/append plus one whole-file `gofmt` pass — not full AST rewriting. | Line-based insertion only ever adds text at specific points and never reconstructs code that was already there, which is a much easier property to get right (and trust) than an AST rewrite that reprints the whole file from its tree. |
 | 13 | ~~Formal `Router` Go interface~~ dropped (Phase 3) in favor of each framework's `Server` type exposing its native engine field directly. | `wire_gen.go` is already regenerated fresh per current framework selection, so there's no hand-written call site that needs a common interface to stay framework-agnostic — the interface would have added a layer with no caller that actually needed the abstraction. |
 | 14 | HTTP routes are derived from the RPC name prefix convention (`Create`/`Get`/`List`/`Update`/`Delete`), not `google.api.http` annotations. | Resolves what §12 originally left as an open question for Phase 3, in the direction that keeps the pure-Go, no-external-proto-dependency property from Decision #5 rather than reintroducing `googleapis` vendoring. |

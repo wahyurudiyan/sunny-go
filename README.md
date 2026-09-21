@@ -5,16 +5,19 @@ a `.proto` contract, serving both HTTP and gRPC from a hexagonal
 (ports & adapters) core.
 
 > **Status:** in active development. `sgo init`, `sgo generate
-> {proto,code,openapi}`, `sgo openapi validate`, `sgo list services`, and
-> `sgo ui` are all real and working: a generated project serves HTTP and
-> gRPC once you implement its service, backed by a real Postgres, MySQL,
-> or MongoDB repository if you selected one (in-memory otherwise), plus
-> Redis/Elasticsearch clients if selected — the quick start is runnable
-> today, not aspirational. `sgo ui` covers the same ground from a browser
-> instead of the terminal, calling the identical
-> `internal/codegen`/`internal/config` functions the CLI does. See
-> `docs/CLI.md` for exactly what's implemented, and `PLAN.md` for what's
-> left (just polish at this point).
+> {proto,code,openapi}`, `sgo openapi validate`, `sgo list services`,
+> `sgo run [--debug]`, and `sgo ui` are all real and working: a
+> generated project serves HTTP and gRPC once you implement its
+> service, backed by a real Postgres, MySQL, or MongoDB repository if
+> you selected one (in-memory otherwise), plus Redis/Elasticsearch
+> clients if selected — the quick start is runnable today, not
+> aspirational. `sgo run` runs it like `go run` would, loading `.env`;
+> `sgo run --debug` additionally serves a localhost dashboard for
+> viewing and editing that configuration live. `sgo ui` covers project
+> scaffolding from a browser instead of the terminal, calling the
+> identical `internal/codegen`/`internal/config` functions the CLI
+> does. See `docs/CLI.md` for exactly what's implemented, and
+> `PLAN.md` for what's left (just polish at this point).
 
 - **`ARCHITECTURE.md`** — the target architecture: hexagonal layout,
   generated-vs-owned file strategy, pluggable HTTP frameworks and
@@ -32,7 +35,7 @@ go install github.com/wahyurudiyan/sunny-go/cmd/sgo@latest
 ```
 
 This installs the `sgo` binary to `$(go env GOPATH)/bin` (make sure
-that's on your `PATH`). Pin a specific release with `@v0.0.1` instead of
+that's on your `PATH`). Pin a specific release with `@0.2.0` instead of
 `@latest` — see `CHANGELOG.md`/the [releases page](https://github.com/wahyurudiyan/sunny-go/releases)
 for what each version contains.
 

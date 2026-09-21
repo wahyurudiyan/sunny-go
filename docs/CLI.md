@@ -217,24 +217,26 @@ exist yet). With a path, validates that file instead — `sgo`-generated
 or hand-authored/imported, and doesn't need to be run from inside an
 `sgo` project at all.
 
-## `sgo run` **(planned, Phase 10)**
+## `sgo run` ✅
 
 ```
 sgo run [--debug] [--debug-port 4748]
 ```
 
-Will run the current project's service — like `go run ./cmd/<name>`
+Runs the current project's service — like `go run ./cmd/<name>`
 (ARCHITECTURE §15) — with `.env` values loaded (real OS environment
 variables still win over `.env`, so a real prod/CI value is never
-silently shadowed by a leftover local `.env` file).
+silently shadowed by a leftover local `.env` file). Stops the service
+cleanly on Ctrl-C.
 
-`--debug` will additionally serve a `127.0.0.1`-only dashboard showing
-every config key currently in effect, its source (`.env` in v1; a
-remote config repo and KMS/Vault-style secret managers are a real,
-defined interface but no concrete adapter yet), and whether it's
-writable. Editing a writable value there will restart the service with
-the new value in effect. Secret values will be masked by default with a
-reveal toggle.
+`--debug` additionally serves a `127.0.0.1`-only dashboard at
+`http://127.0.0.1:<--debug-port>` showing every config key currently in
+effect, its source (`.env` in v1; a remote config repo and
+KMS/Vault-style secret managers are a real, defined interface but no
+concrete adapter yet), and whether it's writable. Editing a writable
+value there restarts the service with the new value in effect. Values
+are masked by default — a value is only ever sent to the browser once
+you click Reveal for that key.
 
 ## Removed/renamed from the current CLI
 

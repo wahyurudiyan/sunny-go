@@ -558,6 +558,173 @@ checked independently with Python's `openapi-spec-validator` — a tool
 that never touches sgo's own vendored schemas or validation code —
 confirming both agree the output is valid.
 
+## 16. Wizard TUI polish **(planned, Phase 11)**
+
+`internal/wizard`'s `huh`-based form renders each `Confirm` field's
+Yes/No buttons centered under that field's own title text by default.
+Diagnosed by capturing `sgo init` under a real pty and inspecting the
+rendered frames rather than guessing from the library's source:
+"Enable Redis cache?" (19
+characters) and "Enable Elasticsearch search?" (29 characters) sit in
+the same group, and since each one's buttons center under its own
+title, they land at different horizontal columns — the buttons visibly
+shift between consecutive fields in the same group instead of forming a
+stable column. Fix: give every `Confirm` in a group the same explicit
+`WithWidth` so all of them anchor to that group's width instead of each
+one's own title length.
+
+## 17. Configurable, simplified project layout **(planned, Phase 12)**
+
+Two decisions locked in via `AskUserQuestion` before any code:
+customization is a `layout:` section inside the existing `sgo.yaml`
+manifest, not a second config file (one file to look at, same as every
+other project setting, §7); and the *default* layout changes too, not
+only gains an override — the concrete complaint was the current default
+nesting up to 6 directories deep for a single generated file
+(`internal/adapter/out/persistence/postgres/user_repository_gen.go`),
+which an escape hatch alone doesn't fix for anyone using the default.
+
+**Simplified default** — drops the `core`/`adapter` wrapper directories
+and the `in`/`out` driving/driven sub-grouping entirely (§3's current
+tree). Everything moves one level up, directly under `internal/`:
+
+```
+internal/
+├── domain/<entity>/           # was core/domain/<entity>/
+├── port/                      # was core/port/{in,out}/ — usecase + repository + cache + search together
+├── service/                   # was core/service/
+├── http/<framework>/          # was adapter/in/http/<framework>/
+├── grpc/                      # was adapter/in/grpc/
+├── persistence/<engine>/      # was adapter/out/persistence/<engine>/
+├── cache/<engine>/            # was adapter/out/cache/<engine>/
+├── search/<engine>/           # was adapter/out/search/<engine>/
+├── mapper/                    # was adapter/mapper/
+└── bootstrap/                 # unchanged
+```
+
+The `in`/`out` distinction was mostly serving the directory tree rather
+than the reader — `UserUsecase` vs. `UserRepository` already say which
+side of the hexagon they're on by name, once they're just files
+sitting in `internal/port/`. Cuts the deepest generated path from 6
+directories to 4.
+
+**`internal/codegen/layout`** — every other `internal/codegen/*gen`
+package currently hardcodes its own `filepath.Join("internal",
+"adapter", "out", "persistence", engine, ...)`-style path. This phase
+adds one small resolver every generator asks instead: a `layout.Slot`
+enum (`Domain`, `Port`, `Service`, `HTTP`, `GRPC`, `Persistence`,
+`Cache`, `Search`, `Mapper`, `Bootstrap`, `Cmd`) resolves to a path
+template with `{entity}`/`{framework}`/`{engine}`/`{project}`
+placeholders, defaulting to the tree above. `sgo.yaml`'s `layout:`
+section overrides any subset of slots by name; anything left unset
+keeps its default — not an all-or-nothing replacement:
+
+```yaml
+layout:
+  persistence: internal/store/{engine}   # only this slot customized
+```
+
+Rolled out one generator package at a time, starting with the smallest
+(`internal/codegen/core`, domain generation) as a throwaway-risk spike
+before touching the other ~9 — the same risk-reduction Phase 2 used
+before committing to the `go/parser` safe-regeneration approach (PLAN.md
+Sequencing notes): confirm the resolver doesn't break §6's file-finding
+(which locates an *owned* file by its expected path) before it's load-
+bearing everywhere.
+
+**Known, documented limitation**: `layout:` is chosen once, at `sgo
+init` time — the same moment HTTP framework and persistence engine
+already are, and no less final. Changing it on an already-generated
+project isn't supported in v1: safe regeneration finds an owned file by
+its *current* expected path, so moving that path out from under
+already-generated files needs a real migration (relocate files, fix
+package import paths) this phase doesn't build. Logged in PLAN.md's
+Non-goals rather than left as a silent trap.
+
+## 18. `sgo list endpoints` **(planned, Phase 13)**
+
+Reuses `internal/codegen/httpgen.BuildRoutes` directly — the same
+function `sgo generate openapi` (§13) and the generated
+`*_routes_gen.go` registration both already derive from — to print
+every current route (method, path, source RPC) for one or all
+registered services. No second route-derivation path to keep in sync;
+whatever this command prints is structurally what the generated HTTP
+adapter actually serves, the same load-bearing property §13's OpenAPI
+generator already relies on.
+
+## 19. OpenAPI discoverability + a live Swagger/Redoc UI **(planned, Phase 14)**
+
+`sgo generate openapi` and `sgo openapi validate` (§13) already exist;
+what's missing is (a) anything in the terminal pointing at them, and (b)
+a way to actually browse a generated document rather than opening raw
+YAML/JSON. (a) is a `sgo generate code` "Next steps" hint, the same
+pattern `sgo init` already uses. (b) is a new command, `sgo openapi ui
+[--port 4749]`: serves the project's already-generated
+`docs/openapi.<ext>` through an embedded interactive doc viewer at
+`http://127.0.0.1:<port>` — `127.0.0.1`-only, no auth, the same stance
+`sgo ui` already takes (§11), and the in-review `sgo run --debug` config
+dashboard takes too. Reads whatever's on disk rather than regenerating
+on every request — the same "run `generate openapi` first if it's
+missing" contract `sgo openapi validate` already has.
+
+The doc-viewer bundle itself (evaluating Redoc's single-file standalone
+build against `swagger-ui-dist`'s multi-file one, picking whichever
+vendors smaller) ships via `go:embed`, not a CDN `<script>` tag —
+consistent with every other "works with no network access" choice this
+project has already made: the pure-Go proto compiler (Decision #5), the
+vendored OpenAPI meta-schemas (§13), the pre-installed browser this dev
+environment already assumes for Playwright verification passes.
+
+## 20. Proto-defined HTTP paths (`google.api.http`) + root path **(planned, Phase 15)**
+
+Resolves the open question §12 already flagged ("a possible future
+upgrade if the convention-based routing proves too rigid") rather than
+reversing Decision #14 outright. Locked in via `AskUserQuestion` before
+any code: **annotations are an optional override, not a replacement.**
+An RPC with no `google.api.http` option keeps today's naming-convention
+routing (§8.1) exactly as-is; one with the option uses it instead.
+Every proto and every generated project that exists today keeps working
+unchanged — this widens what's expressible, it doesn't require anyone
+to adopt it.
+
+**Vendoring, not a `protoc`/`buf` dependency.** `google.api.http` is
+defined by `google/api/http.proto` (referenced via
+`google/api/annotations.proto`) in the `googleapis` repository — real
+option definitions, not a convention sgo invents. Rather than requiring
+those as an external dependency (reopening the "no `buf`/`protoc`
+prerequisite" property Decision #5 already closed), this phase vendors
+just those two small files — the extension/option definitions, not the
+thousands of other `.proto` files in that repository — so
+`bufbuild/protocompile` (already sgo's pure-Go compiler, Decision #5)
+can resolve `import "google/api/annotations.proto";` from the vendored
+copy. No network access, no `protoc`/`buf` binary, same property,
+wider proto vocabulary.
+
+**`sgo`'s own `base_path` service option.** `google.api.http` has no
+service-level path-prefix concept, only per-method rules — so a "root
+path" needs sgo's own small option, `option (sgo.base_path) = "/v1";`,
+a proto extension using a field number in the 50000–99999
+organization-reserved range (proto's own convention for exactly this:
+an org's internal, non-`googleapis`-registered extensions). Applies to
+every route on that service — annotation-derived or convention-derived
+alike — as a drop-in replacement for today's hardcoded `/api/v1` prefix
+(§8.1) when left unset, so a proto that doesn't opt in sees no change.
+
+**`internal/codegen/httpgen.BuildRoutes`** gains one check per RPC
+before falling back to naming-convention derivation: does this method
+carry a `google.api.http` option? If so, method and path come from
+whichever verb field is set (`get`/`post`/`put`/`delete`/`patch`), path
+parameters from that path's `{name}` bindings (translated to each
+framework's own syntax — Gin/Echo `:name`, Chi `{name}` — the same
+per-framework translation the existing `{id}` handling already does),
+and the request body from the option's `body` field. This also resolves
+§12's other flagged open question in passing: path parameters are no
+longer limited to a field literally named `id` — an annotated route's
+parameter names come from the annotation itself, not a hardcoded field-
+name check. `sgo generate openapi` (§13) and `sgo list endpoints` (§18)
+need no changes at all to pick this up — both already only consume
+`BuildRoutes`'s output.
+
 ## Testing strategy
 
 All Go tests — in `sgo` itself and in what it generates — are
@@ -634,17 +801,20 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
 
 - ~~**`buf` as a hard prerequisite**~~ — resolved by Decision #5: no
   `buf`/`protoc` prerequisite at all.
-- ~~**`google.api.http` support**~~ — resolved by Decision #14 for now:
-  routes come from the CRUD RPC naming convention, not annotations. Real
-  `google.api.http` support (arbitrary custom paths/verbs, path-parameter
-  names other than `id`) is still a possible future upgrade if the
-  convention-based routing proves too rigid, but it's no longer blocking
-  anything.
+- **`google.api.http` support** — Decision #14 resolved this for the
+  time being (routes come from the CRUD RPC naming convention, not
+  annotations); §20 (Phase 15, planned) now takes up "a possible future
+  upgrade if the convention-based routing proves too rigid" as an
+  optional override, not a replacement — naming-convention routing keeps
+  working for any proto that doesn't opt in.
 - **HTTP route derivation only understands `id` as the path-parameter
   field name** (`httpgen.hasIDField` checks for a field whose Go name is
   exactly `Id`). A message using a different key field name won't get a
-  path parameter. Revisit alongside real `google.api.http` support if it
-  comes up.
+  path parameter today. §20 (Phase 15, planned) resolves this for any
+  route with an explicit `google.api.http` annotation, since its path
+  parameters come from the annotation's own `{name}` bindings rather
+  than a hardcoded field-name check; convention-derived routes keep the
+  `id`-only limitation.
 - **Query-parameter parsing isn't implemented** — `List*` routes always
   call the usecase with a zero-value request (no `page`/`page_size` read
   from the URL query string), so pagination only works if a caller POSTs

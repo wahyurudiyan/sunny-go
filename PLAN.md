@@ -467,6 +467,276 @@ code: Python's `openapi-spec-validator` accepted the generated output
 for both version/format combinations by hand, in addition to the
 automated suite.
 
+## Phase 11 — Wizard TUI polish **(planned)**
+
+Small, self-contained, ships independently of Phases 12–16. Full design
+in ARCHITECTURE.md §14.
+
+Diagnosed by capturing `sgo init`'s wizard under a real pty and
+inspecting the rendered frames rather than guessing: `huh`'s `Confirm`
+field centers its Yes/No buttons under that field's own title text.
+"Enable Redis cache?" (19 chars) and "Enable Elasticsearch search?" (29
+chars) sit in the same group, so their buttons land at different
+horizontal offsets — the buttons visibly jump left-right between the
+two fields instead of lining up, which reads as "not tidy"/"position
+not proper".
+
+- [ ] Give every `huh.NewConfirm()` in the wizard the same fixed
+      `WithWidth` (or the group's own configured width) so all buttons
+      in a group anchor to the same column regardless of each
+      question's title length, instead of each one centering
+      independently.
+- [ ] Capture the wizard under a real pty again after the fix (same
+      method used to diagnose it) and confirm the button columns now
+      line up — a repeatable check, not just "looks right once".
+- [ ] A `wizard` Ginkgo spec asserting the rendered frame's button
+      column position is identical across every `Confirm` field in the
+      same group (regression guard, since this is exactly the kind of
+      thing that's easy to silently reintroduce by adding a new field
+      with a different-length title later).
+
+**Exit criteria:** every `Confirm` field's Yes/No buttons in the same
+wizard group render at the same horizontal position, verified against a
+real pty capture, with a spec catching a regression.
+
+## Phase 12 — Configurable, simplified project layout **(planned)**
+
+Full design in ARCHITECTURE.md §15. Decided via `AskUserQuestion` before
+any code: layout customization is a `layout:` section in `sgo.yaml`
+itself (a small DSL, not a separate config file), and the *default*
+layout changes too, not just gains an escape hatch — the current
+default (`internal/core/{domain,port/{in,out},service}`,
+`internal/adapter/{in/{http,grpc},out/{persistence,cache,search},mapper}`)
+nests up to 6 directories deep for a single generated file, which is
+the concrete thing "hard to understand" names.
+
+- [ ] **Simplified default layout** — drop the `core`/`adapter` wrapper
+      directories and the `in`/`out` sub-grouping entirely; everything
+      that's currently under `internal/core/*` or `internal/adapter/*`
+      moves one level up, directly under `internal/`:
+      ```
+      internal/
+      ├── domain/<entity>/
+      ├── port/                  # usecase + repository + cache + search, all here
+      ├── service/
+      ├── http/<framework>/
+      ├── grpc/
+      ├── persistence/<engine>/
+      ├── cache/<engine>/
+      ├── search/<engine>/
+      ├── mapper/
+      └── bootstrap/
+      ```
+      The driving/driven (`in`/`out`) distinction was mostly serving the
+      directory tree, not the reader — `<Entity>Usecase` vs.
+      `<Entity>Repository` already say which is which by name once
+      they're just files in `internal/port/`. Cuts the deepest path
+      from 6 directories to 4 (`internal/persistence/postgres/...`).
+- [ ] **`internal/codegen/layout`** — one small package every other
+      `internal/codegen/*gen` package asks "where does this file go?"
+      instead of hardcoding `filepath.Join(...)` itself. A `layout.Slot`
+      enum (`Domain`, `Port`, `Service`, `HTTP`, `GRPC`, `Persistence`,
+      `Cache`, `Search`, `Mapper`, `Bootstrap`, `Cmd`) resolves to a path
+      template (`{entity}`, `{framework}`, `{engine}`, `{project}`
+      placeholders), defaulting to the simplified layout above; a
+      `layout:` section in `sgo.yaml` overrides any subset of slots,
+      the rest keep their default.
+      ```yaml
+      layout:
+        persistence: internal/store/{engine}   # only this one customized
+      ```
+- [ ] Prototype the resolver against **one** generator package first
+      (`internal/codegen/core`, the smallest) before rolling it out to
+      the other ~9 — same risk-reduction Phase 2 used for safe
+      regeneration ("a small throwaway spike... in case it's messier
+      than expected"). Confirm it doesn't break §6's safe-regeneration
+      file-finding before touching `httpgen`, `sqlgen`, `mongogen`,
+      `cachegen`, `searchgen`, `grpcgen`, `wiregen`, the mapper
+      generator, or `project.Scaffold`.
+- [ ] `layout:` is set at `sgo init` time, same as HTTP framework or
+      persistence engine already are. **Known limitation, documented
+      rather than silently unsupported:** changing `layout:` after a
+      project has already been generated isn't supported in v1 — safe
+      regeneration (§6) finds owned files by their *current* expected
+      path, so moving that path out from under already-generated files
+      needs a real migration step this phase doesn't build. Logged as a
+      Non-goal below.
+- [ ] The interactive wizard and web UI aren't extended with a
+      layout-editing UI in this phase — `sgo.yaml` is still a plain text
+      file either surface can point someone at; a dedicated UI for it
+      is a follow-up, not required to ship the underlying capability.
+- [ ] Update every path mentioned in ARCHITECTURE.md §3/§8, docs/CLI.md,
+      and the e2e specs' own path assertions to the new default.
+- [ ] Ginkgo specs: `internal/codegen/layout`'s resolver (default
+      resolution per slot, override-one-keep-rest, unknown slot key
+      rejected with a clear error), plus one full generate-code run
+      against a project with a custom `layout:` override, asserting the
+      overridden slot's files land at the custom path and every other
+      slot still lands at its default.
+
+**Exit criteria:** a freshly generated project's default layout is
+`internal/{domain,port,service,http,grpc,persistence,cache,search,
+mapper,bootstrap}` (no `core`/`adapter` wrapper, no `in`/`out`); a
+project with a `layout:` override in `sgo.yaml` gets exactly the
+customized slots at their custom paths, everything else unchanged, and
+still passes the full existing e2e suite (init → generate proto → hand
+edit → generate code → `go build`) at the new default paths.
+
+## Phase 13 — `sgo list endpoints` **(planned)**
+
+Small, independent of Phases 12/14/15 — ships fast, gets more useful
+once Phase 15 lands proto-defined paths but doesn't depend on it. Full
+design in ARCHITECTURE.md §16.
+
+- [ ] `sgo list endpoints [<service>]` — prints every HTTP route
+      currently derived for the project's registered services (all of
+      them with no argument, one with it): method, path, and which
+      RPC/service it comes from. Reuses
+      `internal/codegen/httpgen.BuildRoutes` directly — the exact same
+      route list `sgo generate openapi` already turns into
+      `docs/openapi.<ext>` and the generated `*_routes_gen.go` actually
+      registers, not a second derivation.
+- [ ] Ginkgo specs (content per framework selection) plus a CLI e2e spec
+      asserting the printed table matches the generated route file's own
+      registrations, same cross-check `openapigen/generate_test.go`
+      already does for the OpenAPI document.
+
+**Exit criteria:** `sgo list endpoints` on a project with generated
+services prints exactly the routes the generated HTTP adapter actually
+registers — verified against the generated route file, not just
+`BuildRoutes`'s own output a second time.
+
+## Phase 14 — OpenAPI discoverability + a live Swagger/Redoc UI **(planned)**
+
+Full design in ARCHITECTURE.md §17. `sgo generate openapi` and `sgo
+openapi validate` already exist (Phase 8) — this phase covers both
+halves of what was actually missing: nothing in the terminal points you
+at them, and there's no way to *browse* the generated document short of
+opening the raw YAML/JSON.
+
+- [ ] **Discoverability** — `sgo generate code` prints a "Next steps"
+      hint mentioning `sgo generate openapi` once a service exists, the
+      same way `sgo init` already prints one for `sgo generate proto`;
+      README's status line and quick start call it out explicitly
+      (partly done already, finish the rest).
+- [ ] **`sgo openapi ui [--port 4749]`** — serves the project's
+      generated `docs/openapi.<ext>` through an embedded interactive API
+      doc viewer at `http://127.0.0.1:<port>` (same `127.0.0.1`-only, no
+      auth stance as `sgo ui`/`sgo run --debug`, §11/§15). Reads
+      whatever's already on disk — same "run `sgo generate openapi`
+      first if it doesn't exist yet" UX `sgo openapi validate` already
+      has, not auto-regenerating on every request.
+- [ ] Vendor a specific pinned version of a standalone doc-viewer bundle
+      (evaluating Redoc's single-file standalone build against
+      `swagger-ui-dist`'s multi-file one — whichever is smaller wins,
+      same self-contained-by-default stance as the vendored OpenAPI
+      meta-schemas in Phase 8) via `go:embed`, not a CDN `<script>` tag —
+      works offline, consistent with every other "no external dependency
+      at runtime" choice this project has made (pure-Go proto compiler,
+      pre-installed browser in dev, vendored meta-schemas).
+- [ ] Ginkgo specs (`httptest`, same pattern as `internal/webui`/
+      `internal/dashboard`) plus a real-browser Playwright pass
+      confirming the page actually renders the project's real paths —
+      same standard `sgo ui` and the Phase 10 dashboard were held to.
+
+**Exit criteria:** `sgo generate code` visibly points at `sgo generate
+openapi`; `sgo openapi ui` on a project with a generated doc serves a
+real interactive viewer showing that project's actual endpoints,
+verified in a real browser, no internet access required.
+
+## Phase 15 — Proto-defined HTTP paths (`google.api.http`) + root path **(planned)**
+
+The riskiest and most novel piece of this batch — resolves the
+`google.api.http` open question ARCHITECTURE.md §12/Decision #14 already
+flagged as "a possible future upgrade if the convention-based routing
+proves too rigid," rather than reversing that decision outright. Full
+design in ARCHITECTURE.md §18. Decided via `AskUserQuestion` before any
+code: **annotations are an optional override, not a replacement** — an
+RPC with no `google.api.http` option keeps today's naming-convention
+routing (`Create*`→`POST`, etc., §8.1); one with the option uses it
+instead. Every existing generated project keeps working unchanged.
+
+- [ ] **Vendor `google/api/http.proto` + `google/api/annotations.proto`**
+      (small, Apache-2.0, just the extension/option definitions — not
+      the whole `googleapis` tree) so `sgo generate proto`-authored files
+      can `import "google/api/annotations.proto";` and the pure-Go
+      compiler (`bufbuild/protocompile`, Decision #5) can resolve that
+      import from the vendored copy without a `protoc`/`buf` binary or
+      network access — preserves the property Decision #5 already
+      established, doesn't reopen it.
+- [ ] **`sgo`'s own `base_path` service option** — `google.api.http` has
+      no concept of a service-level path prefix, only per-method rules,
+      so a root path needs sgo's own small option:
+      `option (sgo.base_path) = "/v1";` on the service (a proto
+      extension in the 50000–99999 organization-reserved range). Applies
+      to every route on that service, annotation-derived or
+      convention-derived — replacing today's hardcoded `/api/v1` prefix
+      (§8.1) with this as the default when unset, so nothing changes for
+      a proto that doesn't opt in.
+- [ ] **`internal/codegen/httpgen.BuildRoutes`** — for each RPC, check
+      for a `google.api.http` option first (method/path from
+      `get`/`post`/`put`/`delete`/`patch`, path parameters from `{name}`
+      bindings, request body from the `body` field); fall back to
+      today's naming-convention derivation when absent. Path parameters
+      translate to each framework's own syntax (Gin/Echo `:name`, Chi
+      `{name}`) same as the existing `{id}` handling already does — not
+      limited to a field literally named `id` any more, resolving the
+      other open question §12 already flagged alongside this one.
+- [ ] `sgo generate openapi` and `sgo list endpoints` (Phase 13) need no
+      changes at all — both already just consume `BuildRoutes`'s output,
+      so proto-defined paths show up in generated OpenAPI docs and
+      `sgo list endpoints` for free once `BuildRoutes` itself understands
+      them.
+- [ ] Ginkgo specs: a proto with an explicit `google.api.http` option
+      generates the annotated route, not the convention-derived one; a
+      proto without one is byte-identical to today's output (regression
+      guard that the override really is optional); path-parameter
+      translation per framework; the `base_path` override; plus a CLI
+      e2e spec building a real project from an annotated proto and
+      hitting the actual generated route over a real socket, same
+      standard the HTTP CRUD e2e suite (Phase 3/4) already holds
+      generated adapters to.
+
+**Exit criteria:** an RPC with a `google.api.http` option gets exactly
+that route; one without keeps today's convention-derived route,
+unchanged; a service with `(sgo.base_path)` set gets that prefix instead
+of the default `/api/v1`; every existing generated-project e2e spec
+still passes with no proto changes.
+
+## Phase 16 — Docs: README as a getting-started guide, CONTRIBUTING.md **(planned)**
+
+Deliberately last in this batch — it should describe the layout,
+commands, and proto conventions Phases 11–15 actually land with, not
+what's true today. Mechanical relative to the rest of this batch.
+
+- [ ] **README.md** restructured into a fuller guide: overview, install,
+      getting started/quick start, full command reference pointer
+      (`docs/CLI.md`), architecture pointer (`ARCHITECTURE.md`), FAQ/
+      troubleshooting section if anything recurring surfaced by then.
+      Still the repo's actual `README.md` (GitHub renders it on the repo
+      homepage) — "as a wiki" means comprehensive and navigable, not a
+      literal GitHub Wiki, which is a separate, harder-to-review,
+      harder-to-PR surface than a file already in the repo.
+- [ ] **`CONTRIBUTING.md`** — the existing "Contributing / development"
+      section moved out of README.md into its own file (standard
+      GitHub convention: `CONTRIBUTING.md`, not `CONTRIBUTE.md` — GitHub
+      links to it automatically from the "Contributing" prompt on a new
+      issue/PR when it's named this way), expanded with the phase-based
+      workflow this project actually uses (plan → `AskUserQuestion` →
+      PLAN.md/ARCHITECTURE.md → implement → PR, not merged by the author)
+      so an outside contributor understands the process before opening
+      one.
+- [ ] Cross-check every command/path mentioned in both files against
+      `docs/CLI.md` and the current generated layout — this phase is the
+      one place drift between "what the docs say" and "what `sgo`
+      actually does" gets caught for this whole batch.
+
+**Exit criteria:** README.md covers overview → install → getting started
+end to end without needing `ARCHITECTURE.md`/`docs/CLI.md` open
+side-by-side for a first-time user; `CONTRIBUTING.md` exists and is
+what GitHub links to from a new issue/PR; nothing in either file
+contradicts `docs/CLI.md` or the actual current layout.
+
 ## Non-goals (for now)
 
 - Multi-service monorepo orchestration beyond one `sgo.yaml` per repo.
@@ -481,6 +751,21 @@ automated suite.
   supplied OpenAPI spec (contract testing) — the Phase 8 checker
   validates a document's own well-formedness, not code-vs-spec
   consistency. Revisit only if requested.
+- Changing `layout:` in `sgo.yaml` after a project has already been
+  generated — Phase 12 picks the layout at `sgo init` time only; safe
+  regeneration (§6) finds owned files at their *current* expected path,
+  so retargeting that path for an already-generated project needs a real
+  migration step (move files, update package paths/imports) this phase
+  doesn't build. Revisit if it turns out people want to change layout
+  mid-project rather than only choosing it up front.
+- A layout-editing UI in the wizard or `sgo ui` — `sgo.yaml`'s `layout:`
+  section is hand-edited YAML in v1, same as any other manifest field
+  before it got wizard/web-UI treatment. Revisit once the underlying
+  capability (Phase 12) has seen real use.
+- A generic templating/plugin system for arbitrary custom generators —
+  Phase 12's `layout:` only relocates *where* sgo's own fixed set of
+  generated files land, it doesn't let someone add a wholly new kind of
+  generated file. Nobody's asked for that yet.
 
 ## Sequencing notes
 
@@ -499,3 +784,24 @@ automated suite.
   different story — once `sgo generate`/adapters exist, a dashboard
   showing their status is more useful, so it stays put unless the web UI
   becomes the priority over Phases 2–4 for some other reason.
+- Phase 11 (wizard polish) ships first in this batch — small, and
+  entirely independent of 12–16.
+- Phase 12 (layout) is the riskiest and most novel piece of this batch —
+  it touches every generator package that writes a file — so it's
+  sequenced right after Phase 11 and before anything else in the batch:
+  Phases 13–15 all consume paths Phase 12 changes, and there's no reason
+  to build on top of a layout that might still move.
+- Phases 13 and 14 are independent of each other and of Phase 15;
+  sequenced 13-then-14 only because `sgo list endpoints` is the smaller
+  of the two.
+- Phase 15 (proto-defined HTTP paths) depends on nothing in this batch
+  functionally, but is sequenced after 12–14 anyway: it's the largest,
+  most novel piece here (new proto vendoring, a new custom option, per-
+  framework path-parameter translation), and Phases 13/14 are more
+  useful to have landed first since Phase 15 makes both of them richer
+  for free (proto-defined routes show up in `sgo list endpoints` and
+  generated OpenAPI docs without either needing changes) rather than the
+  reverse.
+- Phase 16 (docs) is deliberately last — it documents the layout,
+  commands, and proto conventions Phases 11–15 land with, not a snapshot
+  from partway through.

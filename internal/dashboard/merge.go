@@ -47,8 +47,14 @@ func mergeSources(ctx context.Context, sources []envsource.Source) (env []string
 			}
 			declared[v.Key] = v
 			owner[v.Key] = src
-			env = append(env, v.Key+"="+v.Value)
 		}
+	}
+
+	// The env the child should actually run with — same precedence
+	// rule sgo run itself uses on startup.
+	env, err = envsource.Merge(ctx, sources)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	osEnv := os.Environ()
@@ -57,7 +63,6 @@ func mergeSources(ctx context.Context, sources []envsource.Source) (env []string
 		key, val, _ := strings.Cut(kv, "=")
 		osValues[key] = val
 	}
-	env = append(env, osEnv...)
 
 	sort.Strings(order)
 	for _, key := range order {

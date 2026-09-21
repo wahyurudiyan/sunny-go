@@ -487,7 +487,7 @@ Playwright, screenshotted at each step (create-project form → dashboard
 → service created → code generated → sgo.yaml/proto editors), confirming
 the DOM-rendering side actually works, not just the API it calls.
 
-## 13. OpenAPI documentation **(planned, Phase 8)**
+## 13. OpenAPI documentation ✅
 
 `sgo generate openapi` produces a project-wide OpenAPI document
 describing the generated REST API — a **generated output** of the
@@ -498,41 +498,65 @@ not become an alternative way to scaffold routes/code, and the checker
 validates a document's own well-formedness, not "does the code match
 this spec" (see PLAN.md's Non-goals).
 
-- **Definition** (`internal/codegen/openapigen`): one shared Go type
-  model (`Document`, `Info`, `PathItem`, `Operation`, `Parameter`,
+- **Definition** (`internal/codegen/openapigen/types.go`): one shared Go
+  type model (`Document`, `Info`, `PathItem`, `Operation`, `Parameter`,
   `RequestBody`, `Response`, `Schema`, `Components`) for both OpenAPI
-  3.0.x and 3.1.x — the two are close enough structurally that a single
-  IR encoded two ways (a `Version` switch handling `nullable` vs.
-  `type: [X, "null"]`, 3.1-only `jsonSchemaDialect`) is simpler than two
-  parallel type sets, the same reasoning as one `Kind` enum serving every
-  proto scalar type (§5) rather than per-consumer type sets.
-- **Generator**: for every name in `sgo.yaml`'s `services` list,
-  recompiles `contract/pb/<name>.proto` (proto recompilation is already
-  cheap and side-effect-free — the same thing `sgo generate code` does
+  3.0.x and 3.1.x. Simpler than the original design sketch: a
+  version-aware `nullable`/`type:[X,"null"]` split turned out to be
+  unnecessary, because proto3's `Kind` (§5) has no "optional"/nullable
+  concept in the IR yet — every field sgo can currently generate is
+  required, so one `Schema` shape validates under either version's
+  meta-schema unchanged, and `Encode` (`encode.go`) only stamps the
+  top-level `openapi:` version string (`"3.0.3"`/`"3.1.0"`). Revisit this
+  simplification if/when the proto IR grows an optional-field concept.
+- **Generator** (`build.go`, `generate.go`): for every name in
+  `sgo.yaml`'s `services` list, recompiles `contract/pb/<name>.proto`
+  (cheap and side-effect-free, the same thing `sgo generate code` does
   every run) and calls `httpgen.BuildRoutes(file, name)` — the exact
   framework-agnostic function `internal/codegen/httpgen/route.go`
-  already uses to drive the Gin/Echo/Chi templates — to get each
-  service's routes. This is the load-bearing design choice: reusing the
-  real route-derivation function means the OpenAPI doc structurally
-  cannot describe an endpoint the generated HTTP adapter doesn't
-  actually serve, without a separate consistency check. Writes one
+  already uses to drive the Gin/Echo/Chi templates. This is the
+  load-bearing design choice: reusing the real route-derivation function
+  means the OpenAPI doc structurally cannot describe an endpoint the
+  generated HTTP adapter doesn't actually serve. Aggregating multiple
+  services into one flat `components.schemas`/`paths` namespace creates
+  two real hazards, both caught with a clear error rather than silently
+  producing a wrong-but-valid document: two services defining a
+  same-named message with different shapes, and two RPCs deriving the
+  same verb+path (which `gin.Engine` would panic on at registration time
+  anyway — see `addRoute`'s duplicate-slot check). Writes one
   `docs/openapi.<ext>` (yaml or json, per `sgo.yaml`/flags),
   unconditionally overwritten every run — never hand-edited, same
   contract as `contract/gen`.
-- **Checker**: validates a document (bytes in, parsed as either JSON or
-  YAML) against the official OpenAPI 3.0 or 3.1 JSON Schema meta-schema,
-  auto-selected from the document's own `openapi:` version field.
-  Real JSON Schema validation (a maintained Go library, e.g.
-  `santhosh-tekuri/jsonschema/v5`, plus the two meta-schema JSON files
-  vendored via `go:embed` — no network fetch, consistent with §2's "no
-  `protoc`/`buf` install required" stance extended to this IDL too) was
-  chosen over a hand-rolled validator scoped only to what sgo itself can
-  produce, specifically so `sgo openapi validate` gives real answers on
-  arbitrary imported files, not just sgo's own output.
+- **Checker** (`validate.go`): validates a document (bytes in, parsed as
+  either JSON or YAML) against the official OpenAPI 3.0 or 3.1 JSON
+  Schema meta-schema, auto-selected from the document's own `openapi:`
+  version field. Real JSON Schema validation
+  (`github.com/santhosh-tekuri/jsonschema/v5`, plus the two meta-schema
+  JSON files vendored via `go:embed` — no network fetch, consistent with
+  §2's "no `protoc`/`buf` install required" stance extended to this IDL
+  too) was chosen over a hand-rolled validator scoped only to what sgo
+  itself can produce, specifically so `sgo openapi validate` gives real
+  answers on arbitrary imported files, not just sgo's own output. The
+  vendored meta-schemas came from the `@apidevtools/openapi-schemas` npm
+  package's bundle, not fetched directly from
+  `OAI/OpenAPI-Specification` — that repo's `main` branch no longer
+  carries a `schemas/` directory at all (moved to spec.openapis.org,
+  unreachable from this dev environment); see
+  `internal/codegen/openapigen/schemas/NOTICE.md` for full provenance
+  and how to re-vendor later.
 - **Config**: `sgo.yaml` gains `openapi: {version, format}` (§7's
   pattern — a selection made once and reused, not re-specified on every
   command), settable via `sgo init --openapi-version`/`--openapi-format`
-  and editable later through `sgo ui`'s existing raw-YAML editor (§11).
+  (and the interactive wizard, §10), editable later through `sgo ui`'s
+  existing raw-YAML editor (§11) — not yet a dedicated `sgo ui` view of
+  its own, see PLAN.md's Phase 8 follow-up note.
+
+Verified beyond the Ginkgo suite (29 specs in `openapigen`, 7 CLI specs
+driving the real binary): a hand-run of `sgo generate openapi` /
+`sgo openapi validate` for all four version×format combinations, cross-
+checked independently with Python's `openapi-spec-validator` — a tool
+that never touches sgo's own vendored schemas or validation code —
+confirming both agree the output is valid.
 
 ## Testing strategy
 
@@ -602,6 +626,9 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
 | 22 | `sgo ui`'s frontend (`internal/webui/static/`) is plain HTML/CSS/JS with no framework, bundler, or npm dependency — hand-written `fetch()` calls and `<template>` cloning, not React/Vue/a build step. | Consistent with sgo never depending on the frameworks it only generates code referencing (§2): a Node/npm build toolchain to compile the tool's *own* UI would be a heavier, harder-to-audit dependency than the ~500 lines of vanilla JS it replaces, for a dashboard this small. |
 | 23 | `webui.Server` holds one piece of mutable, mutex-guarded state — the directory it's currently serving — rather than being stateless per request. A successful `POST /api/init` moves it from the directory `sgo ui` was started in to the newly scaffolded project. | Mirrors `sgo init myservice && cd myservice` in a single long-running process: without this, the dashboard that naturally follows creating a project would have nothing to show without restarting `sgo ui` pointed at the new directory. The alternative (a project-path parameter on every API call) would need the frontend to track and pass it everywhere for no real benefit, since one `sgo ui` process serving multiple unrelated projects at once isn't a use case anyone asked for. |
 | 24 | `internal/codegen/project.BuildOptions` and `internal/codegen.Status` were extracted from `internal/commands` (previously private `buildInitOptions`/inline `os.Stat` checks) specifically so the web UI's `POST /api/init` and `GET /api/state` could call the identical functions the CLI's `sgo init` and `sgo list services` call. | The Phase 6 exit criterion requires the CLI and web UI to share code paths, not just produce similar-looking output; a byte-for-byte parity test (`internal/commands/webui_parity_test.go`) is only honest to write once both surfaces genuinely call the same code, which required this extraction first. |
+| 25 | OpenAPI generation (`openapigen.Build`) recompiles every registered service's proto and calls `httpgen.BuildRoutes` fresh on every `sgo generate openapi` run, rather than incrementally merging into an existing `docs/openapi.<ext>`. | Matches the `contract/gen`/`wire_gen.go` precedent (Decision philosophy throughout §6/§8): a full-overwrite generated file is far simpler to reason about and trust than incremental merging, and proto recompilation is already cheap — `sgo generate code` re-pays this same cost every run. |
+| 26 | `openapigen`'s `Document`/`Schema` types don't encode OpenAPI 3.0/3.1's `nullable`/`type:[X,"null"]` difference at all. | Proto3's `Kind` (§5) has no "optional"/nullable field concept in the IR yet, so no field sgo can currently generate would ever need it — building version-aware encoding for a case that can't occur yet would be untestable, unverifiable complexity. Revisit together if/when the proto IR gains an optional-field concept. |
+| 27 | The vendored OpenAPI meta-schemas (`internal/codegen/openapigen/schemas/*.json`) were retrieved via the `@apidevtools/openapi-schemas` npm package rather than fetched directly from `OAI/OpenAPI-Specification`. | That repo's `main` branch no longer contains a `schemas/` directory — the meta-schemas moved to spec.openapis.org, which wasn't reachable from this dev environment (network egress here is allowlisted; that domain isn't on it). The npm package's own build step clones straight from the spec repo, so its bundled files are the same official content, just retrieved through a reachable mirror — see `schemas/NOTICE.md` for the full trail. |
 
 ## 12. Open questions
 
@@ -663,3 +690,10 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
   `sgo init` per repo with multiple services generated into it via
   `sgo generate proto/code`. Monorepo-of-independent-modules is out of
   scope unless requested.
+- **Optional/nullable proto fields** — `internal/codegen/proto`'s `Kind`
+  IR has no "optional" concept (proto3's `optional` keyword and
+  wrapper-message-as-nullable patterns both go unrecognized; every field
+  sgo generates is effectively required everywhere, including the
+  OpenAPI `Schema` type, Decision #26). Revisit together with whatever
+  domain/mapper-layer changes adding real optional-field support would
+  need — it isn't just an OpenAPI-layer change.

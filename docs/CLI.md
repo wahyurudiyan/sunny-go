@@ -172,19 +172,50 @@ and asserts byte-identical generated output
 (`internal/commands/webui_parity_test.go`). No auth, since it never
 listens on anything but loopback.
 
-## `sgo generate openapi` / `sgo openapi validate` **(planned, Phase 8)**
+## `sgo generate openapi` ✅
 
 ```
 sgo generate openapi [--version 3.0|3.1] [--format yaml|json]
+```
+
+Recompiles every service in `sgo.yaml`'s `services` list and writes a
+project-wide `docs/openapi.yaml` (or `.json`) from their already-derived
+HTTP routes (ARCHITECTURE §13) — a documentation output of the
+proto-first pipeline, not a second source of truth; `contract/pb` is
+still the only thing you hand-edit. Always fully overwritten, like
+`contract/gen`.
+
+`--version`/`--format` override `sgo.yaml`'s `openapi.version`/
+`openapi.format` for this one run only, without changing the persisted
+selection (set that at `sgo init` with `--openapi-version`/
+`--openapi-format`, or later through `sgo ui`'s `sgo.yaml` editor).
+
+Validates the file it just wrote against the real OpenAPI meta-schema
+before reporting success — the same check `sgo openapi validate` runs on
+demand. If that fails, it's a bug in `sgo` itself.
+
+Fails clearly instead of writing a wrong-but-valid document if two
+services would collide: a same-named message defined differently by two
+proto files, or two RPCs whose derived route is the same HTTP verb and
+path (rename one to fit the Create/Get/List/Update/Delete convention).
+
+## `sgo openapi validate` ✅
+
+```
 sgo openapi validate [path]
 ```
 
-Will generate a project-wide `docs/openapi.<ext>` from every registered
-service's already-derived HTTP routes (ARCHITECTURE §13) — a
-documentation output of the proto-first pipeline, not a second source of
-truth. `sgo openapi validate` checks a document (any path, or the
-project's own generated one by default) against the real OpenAPI 3.0/3.1
-JSON Schema, json or yaml.
+Validates an OpenAPI document — json or yaml, 3.0.x or 3.1.x
+(auto-detected from its own `openapi:` field) — against the real,
+vendored OpenAPI JSON Schema meta-schema. This checks the document's own
+well-formedness, not whether it matches any particular project's
+generated routes.
+
+With no path, validates the current project's own generated
+`docs/openapi.<ext>` (run `sgo generate openapi` first if it doesn't
+exist yet). With a path, validates that file instead — `sgo`-generated
+or hand-authored/imported, and doesn't need to be run from inside an
+`sgo` project at all.
 
 ## Removed/renamed from the current CLI
 

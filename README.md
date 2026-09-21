@@ -5,15 +5,16 @@ a `.proto` contract, serving both HTTP and gRPC from a hexagonal
 (ports & adapters) core.
 
 > **Status:** in active development. `sgo init`, `sgo generate
-> {proto,code}`, `sgo list services`, and `sgo ui` are all real and
-> working: a generated project serves HTTP and gRPC once you implement
-> its service, backed by a real Postgres, MySQL, or MongoDB repository if
-> you selected one (in-memory otherwise), plus Redis/Elasticsearch
-> clients if selected — the quick start is runnable today, not
-> aspirational. `sgo ui` covers the same ground from a browser instead of
-> the terminal, calling the identical `internal/codegen`/`internal/config`
-> functions the CLI does. See `docs/CLI.md` for exactly what's
-> implemented, and `PLAN.md` for what's left (just polish at this point).
+> {proto,code,openapi}`, `sgo openapi validate`, `sgo list services`, and
+> `sgo ui` are all real and working: a generated project serves HTTP and
+> gRPC once you implement its service, backed by a real Postgres, MySQL,
+> or MongoDB repository if you selected one (in-memory otherwise), plus
+> Redis/Elasticsearch clients if selected — the quick start is runnable
+> today, not aspirational. `sgo ui` covers the same ground from a browser
+> instead of the terminal, calling the identical
+> `internal/codegen`/`internal/config` functions the CLI does. See
+> `docs/CLI.md` for exactly what's implemented, and `PLAN.md` for what's
+> left (just polish at this point).
 
 - **`ARCHITECTURE.md`** — the target architecture: hexagonal layout,
   generated-vs-owned file strategy, pluggable HTTP frameworks and
@@ -65,6 +66,12 @@ and gRPC on `:9090`, both backed by the same service instance.
   builds and runs the compiled binary and drives a full HTTP CRUD cycle
   against it, plus a suite that drives the actual `sgo` binary itself as
   a subprocess through the whole quick-start flow above.
+- OpenAPI documentation (`sgo generate openapi`, ARCHITECTURE.md §13):
+  a project-wide `docs/openapi.yaml`/`.json`, 3.0 or 3.1, built from the
+  same routes the HTTP adapter actually serves — never a hand-maintained
+  second copy. `sgo openapi validate` checks any document (that one, or
+  any other file, `sgo`-generated or not) against the real OpenAPI JSON
+  Schema meta-schema.
 
 ## Contributing / development
 

@@ -30,6 +30,7 @@ type Options struct {
 	Persistence   config.Persistence
 	Cache         []config.CacheEngine
 	Search        []config.SearchEngine
+	OpenAPI       config.OpenAPI
 }
 
 // ValidateName checks that name is safe to use as both a directory name
@@ -52,14 +53,24 @@ func ValidateName(name string) error {
 // its comma-separated flags into these slices first) and the web UI's
 // `POST /api/init` (which already has typed JSON arrays), so both
 // surfaces reject the same invalid input the same way rather than each
-// re-implementing this check. module defaults to name when empty.
-func BuildOptions(name, module string, httpFramework config.HTTPFramework, persistenceMode config.PersistenceMode, db []config.PersistenceEngine, cache []config.CacheEngine, search []config.SearchEngine) (*Options, error) {
+// re-implementing this check. module defaults to name when empty;
+// openapiVersion/openapiFormat default to config.DefaultOpenAPI() when
+// either is empty, so callers that don't care can pass zero values.
+func BuildOptions(name, module string, httpFramework config.HTTPFramework, persistenceMode config.PersistenceMode, db []config.PersistenceEngine, cache []config.CacheEngine, search []config.SearchEngine, openapiVersion config.OpenAPIVersion, openapiFormat config.OpenAPIFormat) (*Options, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
 
 	if module == "" {
 		module = name
+	}
+
+	openapi := config.DefaultOpenAPI()
+	if openapiVersion != "" {
+		openapi.Version = openapiVersion
+	}
+	if openapiFormat != "" {
+		openapi.Format = openapiFormat
 	}
 
 	opts := &Options{
@@ -70,8 +81,9 @@ func BuildOptions(name, module string, httpFramework config.HTTPFramework, persi
 			Mode:    persistenceMode,
 			Engines: db,
 		},
-		Cache:  cache,
-		Search: search,
+		Cache:   cache,
+		Search:  search,
+		OpenAPI: openapi,
 	}
 
 	cfg := config.Config{
@@ -80,6 +92,7 @@ func BuildOptions(name, module string, httpFramework config.HTTPFramework, persi
 		Persistence:   opts.Persistence,
 		Cache:         opts.Cache,
 		Search:        opts.Search,
+		OpenAPI:       opts.OpenAPI,
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -136,6 +149,7 @@ func Scaffold(destDir string, opts Options) error {
 		Persistence:   opts.Persistence,
 		Cache:         opts.Cache,
 		Search:        opts.Search,
+		OpenAPI:       opts.OpenAPI,
 	}
 	if err := cfg.Save(destDir); err != nil {
 		return fmt.Errorf("failed to write %s: %w", config.FileName, err)

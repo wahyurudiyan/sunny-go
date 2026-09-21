@@ -20,6 +20,10 @@ func validConfig() *config.Config {
 		},
 		Cache:  []config.CacheEngine{config.CacheEngineRedis},
 		Search: []config.SearchEngine{config.SearchEngineElasticsearch},
+		OpenAPI: config.OpenAPI{
+			Version: config.OpenAPIVersion30,
+			Format:  config.OpenAPIFormatYAML,
+		},
 	}
 }
 
@@ -82,6 +86,24 @@ var _ = Describe("Config", func() {
 				cfg.Search = []config.SearchEngine{"solr"}
 
 				Expect(cfg.Validate()).To(MatchError(ContainSubstring(`"solr"`)))
+			})
+		})
+
+		Context("when the OpenAPI version is unrecognized", func() {
+			It("returns an error naming the invalid value", func() {
+				cfg := validConfig()
+				cfg.OpenAPI.Version = "2.0"
+
+				Expect(cfg.Validate()).To(MatchError(ContainSubstring("openapi.version")))
+			})
+		})
+
+		Context("when the OpenAPI format is unrecognized", func() {
+			It("returns an error naming the invalid value", func() {
+				cfg := validConfig()
+				cfg.OpenAPI.Format = "xml"
+
+				Expect(cfg.Validate()).To(MatchError(ContainSubstring("openapi.format")))
 			})
 		})
 	})

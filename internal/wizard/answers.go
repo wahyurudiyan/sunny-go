@@ -9,13 +9,15 @@ import (
 // Separated from the form itself (wizard.go) so the assembly/validation
 // logic can be unit tested without driving a real terminal.
 type answers struct {
-	Name          string
-	Module        string
-	HTTPFramework string
-	Persistence   string
-	Datastores    []string
-	EnableRedis   bool
-	EnableSearch  bool
+	Name           string
+	Module         string
+	HTTPFramework  string
+	Persistence    string
+	Datastores     []string
+	EnableRedis    bool
+	EnableSearch   bool
+	OpenAPIVersion string
+	OpenAPIFormat  string
 }
 
 // assemble turns the raw form answers into validated project.Options.
@@ -44,6 +46,14 @@ func (a answers) assemble() (*project.Options, error) {
 		search = []config.SearchEngine{config.SearchEngineElasticsearch}
 	}
 
+	openapi := config.DefaultOpenAPI()
+	if a.OpenAPIVersion != "" {
+		openapi.Version = config.OpenAPIVersion(a.OpenAPIVersion)
+	}
+	if a.OpenAPIFormat != "" {
+		openapi.Format = config.OpenAPIFormat(a.OpenAPIFormat)
+	}
+
 	opts := &project.Options{
 		Name:          a.Name,
 		Module:        module,
@@ -52,8 +62,9 @@ func (a answers) assemble() (*project.Options, error) {
 			Mode:    config.PersistenceMode(a.Persistence),
 			Engines: engines,
 		},
-		Cache:  cache,
-		Search: search,
+		Cache:   cache,
+		Search:  search,
+		OpenAPI: openapi,
 	}
 
 	cfg := config.Config{
@@ -62,6 +73,7 @@ func (a answers) assemble() (*project.Options, error) {
 		Persistence:   opts.Persistence,
 		Cache:         opts.Cache,
 		Search:        opts.Search,
+		OpenAPI:       opts.OpenAPI,
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err

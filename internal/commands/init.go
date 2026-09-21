@@ -15,12 +15,14 @@ import (
 )
 
 var (
-	initModule        string
-	initHTTPFramework string
-	initPersistence   string
-	initDB            string
-	initCache         string
-	initSearch        string
+	initModule         string
+	initHTTPFramework  string
+	initPersistence    string
+	initDB             string
+	initCache          string
+	initSearch         string
+	initOpenAPIVersion string
+	initOpenAPIFormat  string
 )
 
 var initCmd = &cobra.Command{
@@ -74,7 +76,7 @@ Examples:
 
 // wizardFlags lists the init flags whose presence means the user wants
 // direct, non-interactive control — any one of them skips the wizard.
-var wizardFlags = []string{"module", "http-framework", "persistence-mode", "db", "cache", "search"}
+var wizardFlags = []string{"module", "http-framework", "persistence-mode", "db", "cache", "search", "openapi-version", "openapi-format"}
 
 // resolveInitOptions decides between the interactive wizard and the
 // flag-driven path (ARCHITECTURE.md §10): the wizard runs only when no
@@ -102,6 +104,8 @@ func buildInitOptions(name string) (*project.Options, error) {
 		splitEngines[config.PersistenceEngine](initDB),
 		splitEngines[config.CacheEngine](initCache),
 		splitEngines[config.SearchEngine](initSearch),
+		config.OpenAPIVersion(initOpenAPIVersion),
+		config.OpenAPIFormat(initOpenAPIFormat),
 	)
 }
 
@@ -132,6 +136,8 @@ func init() {
 	initCmd.Flags().StringVar(&initDB, "db", "", "Comma-separated datastores: postgres, mysql, mongo")
 	initCmd.Flags().StringVar(&initCache, "cache", "", "Comma-separated cache engines: redis")
 	initCmd.Flags().StringVar(&initSearch, "search", "", "Comma-separated search engines: elasticsearch")
+	initCmd.Flags().StringVar(&initOpenAPIVersion, "openapi-version", string(config.OpenAPIVersion30), "OpenAPI doc version: 3.0, 3.1")
+	initCmd.Flags().StringVar(&initOpenAPIFormat, "openapi-format", string(config.OpenAPIFormatYAML), "OpenAPI doc format: yaml, json")
 
 	rootCmd.AddCommand(initCmd)
 }

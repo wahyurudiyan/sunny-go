@@ -18,10 +18,13 @@ import (
 // field when the caller already has one (e.g. `sgo init myservice` with
 // no other flags).
 func Run(defaultName string) (*project.Options, error) {
+	defaultOpenAPI := config.DefaultOpenAPI()
 	a := answers{
-		Name:          defaultName,
-		HTTPFramework: string(config.HTTPFrameworkGin),
-		Persistence:   string(config.PersistenceModeORM),
+		Name:           defaultName,
+		HTTPFramework:  string(config.HTTPFrameworkGin),
+		Persistence:    string(config.PersistenceModeORM),
+		OpenAPIVersion: string(defaultOpenAPI.Version),
+		OpenAPIFormat:  string(defaultOpenAPI.Format),
 	}
 
 	form := huh.NewForm(
@@ -69,6 +72,23 @@ func Run(defaultName string) (*project.Options, error) {
 			huh.NewConfirm().
 				Title("Enable Elasticsearch search?").
 				Value(&a.EnableSearch),
+		),
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("OpenAPI version").
+				Description("For `sgo generate openapi`").
+				Options(
+					huh.NewOption("3.0", string(config.OpenAPIVersion30)),
+					huh.NewOption("3.1", string(config.OpenAPIVersion31)),
+				).
+				Value(&a.OpenAPIVersion),
+			huh.NewSelect[string]().
+				Title("OpenAPI doc format").
+				Options(
+					huh.NewOption("YAML", string(config.OpenAPIFormatYAML)),
+					huh.NewOption("JSON", string(config.OpenAPIFormatJSON)),
+				).
+				Value(&a.OpenAPIFormat),
 		),
 	).WithTheme(huh.ThemeCharm())
 

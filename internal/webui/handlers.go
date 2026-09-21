@@ -105,6 +105,8 @@ type initRequest struct {
 	DB              []string `json:"db"`
 	Cache           []string `json:"cache"`
 	Search          []string `json:"search"`
+	OpenAPIVersion  string   `json:"openapiVersion"`
+	OpenAPIFormat   string   `json:"openapiFormat"`
 }
 
 func toEngines[T ~string](raw []string) []T {
@@ -129,6 +131,8 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 		toEngines[config.PersistenceEngine](req.DB),
 		toEngines[config.CacheEngine](req.Cache),
 		toEngines[config.SearchEngine](req.Search),
+		config.OpenAPIVersion(req.OpenAPIVersion),
+		config.OpenAPIFormat(req.OpenAPIFormat),
 	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)

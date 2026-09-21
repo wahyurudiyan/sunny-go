@@ -52,10 +52,37 @@ type SearchEngine string
 
 const SearchEngineElasticsearch SearchEngine = "elasticsearch"
 
+// OpenAPIVersion selects which OpenAPI Specification version `sgo
+// generate openapi` targets (ARCHITECTURE.md §13). The two are close
+// enough structurally that openapigen shares one document model between
+// them; this only picks which meta-schema validates the result and
+// which version string is stamped on it.
+type OpenAPIVersion string
+
+const (
+	OpenAPIVersion30 OpenAPIVersion = "3.0"
+	OpenAPIVersion31 OpenAPIVersion = "3.1"
+)
+
+// OpenAPIFormat selects the serialization `sgo generate openapi` writes
+// docs/openapi.<ext> in.
+type OpenAPIFormat string
+
+const (
+	OpenAPIFormatYAML OpenAPIFormat = "yaml"
+	OpenAPIFormatJSON OpenAPIFormat = "json"
+)
+
 // Persistence holds the persistence-related selections for a project.
 type Persistence struct {
 	Mode    PersistenceMode     `yaml:"mode" json:"mode"`
 	Engines []PersistenceEngine `yaml:"engines,omitempty" json:"engines,omitempty"`
+}
+
+// OpenAPI holds a project's OpenAPI documentation generation settings.
+type OpenAPI struct {
+	Version OpenAPIVersion `yaml:"version" json:"version"`
+	Format  OpenAPIFormat  `yaml:"format" json:"format"`
 }
 
 // Config is the sgo.yaml project manifest. JSON tags are for the web
@@ -67,7 +94,16 @@ type Config struct {
 	Persistence   Persistence    `yaml:"persistence" json:"persistence"`
 	Cache         []CacheEngine  `yaml:"cache,omitempty" json:"cache,omitempty"`
 	Search        []SearchEngine `yaml:"search,omitempty" json:"search,omitempty"`
+	OpenAPI       OpenAPI        `yaml:"openapi" json:"openapi"`
 	Services      []string       `yaml:"services,omitempty" json:"services,omitempty"`
+}
+
+// DefaultOpenAPI is what `sgo init` persists when the user doesn't pass
+// --openapi-version/--openapi-format: 3.0 is the more widely supported
+// target for existing tooling (Swagger UI, Redoc, most API gateways),
+// yaml matches the rest of sgo's own generated/hand-authored files.
+func DefaultOpenAPI() OpenAPI {
+	return OpenAPI{Version: OpenAPIVersion30, Format: OpenAPIFormatYAML}
 }
 
 var (
@@ -90,6 +126,14 @@ var (
 	}
 	validSearchEngines = map[SearchEngine]bool{
 		SearchEngineElasticsearch: true,
+	}
+	validOpenAPIVersions = map[OpenAPIVersion]bool{
+		OpenAPIVersion30: true,
+		OpenAPIVersion31: true,
+	}
+	validOpenAPIFormats = map[OpenAPIFormat]bool{
+		OpenAPIFormatYAML: true,
+		OpenAPIFormatJSON: true,
 	}
 )
 
@@ -124,6 +168,14 @@ func (c *Config) Validate() error {
 		if !validSearchEngines[engine] {
 			return fmt.Errorf("invalid search engine %q: must be one of elasticsearch", engine)
 		}
+	}
+
+	if !validOpenAPIVersions[c.OpenAPI.Version] {
+		return fmt.Errorf("invalid openapi.version %q: must be one of 3.0, 3.1", c.OpenAPI.Version)
+	}
+
+	if !validOpenAPIFormats[c.OpenAPI.Format] {
+		return fmt.Errorf("invalid openapi.format %q: must be one of yaml, json", c.OpenAPI.Format)
 	}
 
 	return nil

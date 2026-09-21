@@ -45,30 +45,47 @@ var _ = Describe("ValidateName", func() {
 // both surfaces.
 var _ = Describe("BuildOptions", func() {
 	It("defaults module to name when module is empty", func() {
-		opts, err := project.BuildOptions("shop", "", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil)
+		opts, err := project.BuildOptions("shop", "", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil, "", "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(opts.Module).To(Equal("shop"))
 	})
 
 	It("keeps an explicitly given module", func() {
-		opts, err := project.BuildOptions("shop", "github.com/acme/shop", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil)
+		opts, err := project.BuildOptions("shop", "github.com/acme/shop", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil, "", "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(opts.Module).To(Equal("github.com/acme/shop"))
 	})
 
 	It("rejects an invalid name before anything else", func() {
-		_, err := project.BuildOptions("bad name", "", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil)
+		_, err := project.BuildOptions("bad name", "", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil, "", "")
 		Expect(err).To(MatchError(ContainSubstring("invalid characters")))
 	})
 
 	It("rejects an invalid HTTP framework", func() {
-		_, err := project.BuildOptions("shop", "", config.HTTPFramework("fiber"), config.PersistenceModeORM, nil, nil, nil)
+		_, err := project.BuildOptions("shop", "", config.HTTPFramework("fiber"), config.PersistenceModeORM, nil, nil, nil, "", "")
 		Expect(err).To(MatchError(ContainSubstring("invalid httpFramework")))
 	})
 
 	It("rejects an invalid persistence engine", func() {
-		_, err := project.BuildOptions("shop", "", config.HTTPFrameworkGin, config.PersistenceModeORM, []config.PersistenceEngine{"oracle"}, nil, nil)
+		_, err := project.BuildOptions("shop", "", config.HTTPFrameworkGin, config.PersistenceModeORM, []config.PersistenceEngine{"oracle"}, nil, nil, "", "")
 		Expect(err).To(MatchError(ContainSubstring("invalid persistence engine")))
+	})
+
+	It("defaults openapi version/format when both are empty", func() {
+		opts, err := project.BuildOptions("shop", "", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil, "", "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(opts.OpenAPI).To(Equal(config.DefaultOpenAPI()))
+	})
+
+	It("keeps an explicitly given openapi version/format", func() {
+		opts, err := project.BuildOptions("shop", "", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil, config.OpenAPIVersion31, config.OpenAPIFormatJSON)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(opts.OpenAPI).To(Equal(config.OpenAPI{Version: config.OpenAPIVersion31, Format: config.OpenAPIFormatJSON}))
+	})
+
+	It("rejects an invalid openapi version", func() {
+		_, err := project.BuildOptions("shop", "", config.HTTPFrameworkGin, config.PersistenceModeORM, nil, nil, nil, "2.0", "")
+		Expect(err).To(MatchError(ContainSubstring("openapi.version")))
 	})
 
 	It("carries persistence, cache, and search selections through", func() {
@@ -76,6 +93,7 @@ var _ = Describe("BuildOptions", func() {
 			[]config.PersistenceEngine{config.PersistenceEnginePostgres},
 			[]config.CacheEngine{config.CacheEngineRedis},
 			[]config.SearchEngine{config.SearchEngineElasticsearch},
+			"", "",
 		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(opts.HTTPFramework).To(Equal(config.HTTPFrameworkEcho))

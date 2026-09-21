@@ -21,6 +21,7 @@ a `.proto` contract, serving both HTTP and gRPC from a hexagonal
   datastores, `sgo init`/`sgo ui` design.
 - **`PLAN.md`** — phased delivery plan for getting there.
 - **`docs/CLI.md`** — command reference (implemented and planned).
+- **`CHANGELOG.md`** — release history (`sgo --version`).
 
 ## Quick start
 

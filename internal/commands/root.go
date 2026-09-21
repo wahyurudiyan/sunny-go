@@ -8,9 +8,15 @@ import (
 	"github.com/wahyurudiyan/sunny-go/internal/banner"
 )
 
+// Version is sgo's own release version (not to be confused with the
+// OpenAPI document version a generated project can select) — see
+// CHANGELOG.md. Bump this alongside a new CHANGELOG.md entry.
+const Version = "0.0.1"
+
 var rootCmd = &cobra.Command{
-	Use:   "sgo",
-	Short: "sgo CLI for Go web application boilerplating.",
+	Use:     "sgo",
+	Short:   "sgo CLI for Go web application boilerplating.",
+	Version: Version,
 	Long: color.HiWhiteString(banner.SunnyGoBannerBold) + `
 sgo is an open-source CLI tool to bootstrap and evolve a Go service from a
 proto contract, serving both HTTP and gRPC from a hexagonal core.

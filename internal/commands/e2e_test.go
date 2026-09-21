@@ -17,6 +17,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/wahyurudiyan/sunny-go/internal/commands"
 )
 
 // sgoBinary is built once for the whole suite rather than per spec —
@@ -126,5 +128,15 @@ var _ = Describe("the sgo CLI, driven as a real subprocess", func() {
 		out, err = runSgo(root, "init", "demo", "--http-framework", "gin")
 		Expect(err).To(HaveOccurred())
 		Expect(out).To(ContainSubstring("already exists"))
+	})
+
+	It("reports its version", func() {
+		root, err := os.MkdirTemp("", "sgo-cli-e2e-version-*")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(os.RemoveAll(root)).To(Succeed()) })
+
+		out, err := runSgo(root, "--version")
+		Expect(err).NotTo(HaveOccurred(), out)
+		Expect(out).To(ContainSubstring("sgo version " + commands.Version))
 	})
 })

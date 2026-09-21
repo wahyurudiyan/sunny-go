@@ -36,7 +36,7 @@ var _ = BeforeSuite(func() {
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	Expect(err).NotTo(HaveOccurred())
 
-	build := exec.Command("go", "build", "-o", sgoBinary, "./cmd")
+	build := exec.Command("go", "build", "-o", sgoBinary, "./cmd/sgo")
 	build.Dir = repoRoot
 	out, err := build.CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), string(out))

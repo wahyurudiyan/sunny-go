@@ -4,7 +4,7 @@
 
 # Build the sgo CLI
 build:
-	go build -o bin/sgo ./cmd
+	go build -o bin/sgo ./cmd/sgo
 
 # Clean build artifacts
 clean:
@@ -25,4 +25,4 @@ run: build
 
 # Run without building a binary first
 dev:
-	go run ./cmd
+	go run ./cmd/sgo

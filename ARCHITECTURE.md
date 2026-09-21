@@ -573,73 +573,126 @@ stable column. Fix: give every `Confirm` in a group the same explicit
 `WithWidth` so all of them anchor to that group's width instead of each
 one's own title length.
 
-## 17. Configurable, simplified project layout **(planned, Phase 12)**
+## 17. Replace the generated architecture with DDD tactical patterns **(planned, Phase 12)**
 
-Two decisions locked in via `AskUserQuestion` before any code:
-customization is a `layout:` section inside the existing `sgo.yaml`
-manifest, not a second config file (one file to look at, same as every
-other project setting, §7); and the *default* layout changes too, not
-only gains an override — the concrete complaint was the current default
-nesting up to 6 directories deep for a single generated file
-(`internal/adapter/out/persistence/postgres/user_repository_gen.go`),
-which an escape hatch alone doesn't fix for anyone using the default.
+**The largest single phase in this document.** Redefined via a
+follow-up `AskUserQuestion` round from a much smaller version of this
+section (which only flattened §3's current nesting and added a
+`layout:` override in `sgo.yaml`). sgo's generated architecture moves
+from today's flat CRUD-hexagonal model — one struct per proto message,
+a permanently fixed 5-method repository (Decision #11), no domain
+events, no invariant enforcement beyond whatever a developer hand-writes
+into an owned file's undefined "validation, invariants" comment (§5) —
+to real DDD tactical patterns, **replacing the current default
+outright**, not as a selectable alternative beside it.
 
-**Simplified default** — drops the `core`/`adapter` wrapper directories
-and the `in`/`out` driving/driven sub-grouping entirely (§3's current
-tree). Everything moves one level up, directly under `internal/`:
+**The central technical problem, stated plainly**: proto3 has no native
+way to express "this message is an aggregate root," "this field has
+this invariant," or "this operation fires this event." Everything
+downstream of that — aggregates that actually enforce something, events
+that actually get collected — needs *some* mechanical signal beyond
+today's plain message/field/RPC shapes to act on. Two decisions were
+explicit, `AskUserQuestion`-confirmed before writing this: **full
+semantic upgrade** (real invariant enforcement and event collection,
+not a cosmetic rename) and **event-bus infrastructure explicitly
+deferred** (a real `EventPublisher` seam ships, Kafka/RabbitMQ/NATS
+doesn't — a separate idea for later, not designed here). The concrete
+mechanism for the semantic part — real, standards-based proto
+extensions rather than a second hand-authored modeling file — is this
+document's own proposal, not something the `AskUserQuestion` round
+itself specified; flagged here for explicit sign-off before
+implementation, the same as every other design choice in this document
+gets reviewed via PR before code.
 
-```
-internal/
-├── domain/<entity>/           # was core/domain/<entity>/
-├── port/                      # was core/port/{in,out}/ — usecase + repository + cache + search together
-├── service/                   # was core/service/
-├── http/<framework>/          # was adapter/in/http/<framework>/
-├── grpc/                      # was adapter/in/grpc/
-├── persistence/<engine>/      # was adapter/out/persistence/<engine>/
-├── cache/<engine>/            # was adapter/out/cache/<engine>/
-├── search/<engine>/           # was adapter/out/search/<engine>/
-├── mapper/                    # was adapter/mapper/
-└── bootstrap/                 # unchanged
-```
+**`sgo/options.proto`** (vendored, `go:embed`, resolved by the existing
+pure-Go compiler — no `protoc`/`buf` binary, Decision #5 unaffected)
+becomes the origin of sgo's custom-options mechanism: `MessageOptions`
+extensions `(sgo.aggregate_root)`, `(sgo.value_object)`,
+`(sgo.domain_event)`; `MethodOptions` extensions
+`(sgo.command)`/`(sgo.query)`. §20 (Phase 15, `(sgo.base_path)`) and §21
+(Phase 16, `(sgo.repository_query)`/`(sgo.hide_route)`) add fields to
+this same file rather than each vendoring their own — this phase is
+sequenced first specifically so that's possible (PLAN.md Sequencing
+notes).
 
-The `in`/`out` distinction was mostly serving the directory tree rather
-than the reader — `UserUsecase` vs. `UserRepository` already say which
-side of the hexagon they're on by name, once they're just files
-sitting in `internal/port/`. Cuts the deepest generated path from 6
-directories to 4.
+**Real invariants via `buf/validate/validate.proto`** (protovalidate —
+CEL-expression field/message constraints, the modern successor to
+`protoc-gen-validate`), vendored the same way, plus
+`github.com/bufbuild/protovalidate-go` as a new direct dependency in a
+*generated project's* `go.mod`. A generated `Validate() error` method
+calls the real library against whatever constraints the message
+declares — genuine, standards-based validation, not sgo hand-rolling
+CEL evaluation itself. Same "vendor a real spec instead of inventing
+one" principle §19/§20 already establish for OpenAPI's meta-schemas and
+`google.api.http`.
 
-**`internal/codegen/layout`** — every other `internal/codegen/*gen`
-package currently hardcodes its own `filepath.Join("internal",
-"adapter", "out", "persistence", engine, ...)`-style path. This phase
-adds one small resolver every generator asks instead: a `layout.Slot`
-enum (`Domain`, `Port`, `Service`, `HTTP`, `GRPC`, `Persistence`,
-`Cache`, `Search`, `Mapper`, `Bootstrap`, `Cmd`) resolves to a path
-template with `{entity}`/`{framework}`/`{engine}`/`{project}`
-placeholders, defaulting to the tree above. `sgo.yaml`'s `layout:`
-section overrides any subset of slots by name; anything left unset
-keeps its default — not an all-or-nothing replacement:
+**`internal/domain/<context>/`** replaces `internal/core/domain/
+<entity>/`: the message marked `(sgo.aggregate_root)` (or matching the
+entity name by today's convention, if nothing's explicitly marked) is
+the Aggregate Root; `(sgo.value_object)` generates an immutable Go type
+(constructor-validated, no setters); `(sgo.domain_event)` generates a
+plain struct in `events.go`; anything else the aggregate references
+becomes a child Entity. The generated sibling (still split from the
+owned file by Decision #3's principle) gains real scaffolding beyond
+today's flat struct: an internal `events []DomainEvent` slice,
+`PullEvents() []DomainEvent`, and `Validate() error` wired to
+protovalidate. The owned `aggregate.go` (same never-overwritten
+contract as today's owned `<entity>.go`) is still where actual business
+methods and invariant-triggered event appends get hand-written — sgo
+scaffolds the *mechanism*, it has no way to know arbitrary business
+rules, and doesn't pretend to generate them.
 
-```yaml
-layout:
-  persistence: internal/store/{engine}   # only this slot customized
-```
+**Shared kernel** (`domain/shared/`): a value-object message under
+`contract/pb/shared/*.proto`, imported by multiple entity protos (e.g.
+`shared.Money` used by both `Order` and `Invoice`), generates once into
+`internal/domain/shared/` rather than once per importing context. The
+proto resolver already handles cross-file imports for `google/
+protobuf/*` and (after Phase 15) `google/api/*`; this extends the same
+resolution to a project's own `contract/pb/shared/` imports.
+Regenerating two different entities that both reference `shared.Money`
+must produce byte-identical output for it — an idempotency requirement
+this phase's own suite tests directly, not an assumption.
 
-Rolled out one generator package at a time, starting with the smallest
-(`internal/codegen/core`, domain generation) as a throwaway-risk spike
-before touching the other ~9 — the same risk-reduction Phase 2 used
-before committing to the `go/parser` safe-regeneration approach (PLAN.md
-Sequencing notes): confirm the resolver doesn't break §6's file-finding
-(which locates an *owned* file by its expected path) before it's load-
-bearing everywhere.
+**`internal/application/<context>/`** replaces `internal/core/port/in/`
++ `internal/core/service/`: `command.go`/`query.go` hold DTOs derived
+from RPC request messages, classified by the same naming-convention
+heuristic HTTP routing already uses (`Create`/`Update`/`Delete` →
+command, `Get`/`List` → query), overridable per-RPC via
+`(sgo.command)`/`(sgo.query)` — the same "convention with an explicit
+override" shape §20/§21's options already use. `service.go` keeps
+today's owned-file, stub-appended-per-new-RPC contract (Decision #12),
+but now actually orchestrates load-aggregate → call its mutating method
+(validates + collects events internally) → save → pull events → hand
+them to `application/ports/event_publisher.go`'s `EventPublisher`
+interface. A real behavioral upgrade, not a rename: today's service
+calls the repository directly with no aggregate, invariant, or event
+step at all. `EventPublisher` ships with one real default, a no-op
+implementation wired into `wire_gen.go` — no `infrastructure/
+messaging/` package generated in v1 (an empty placeholder directory
+with nothing behind it isn't something sgo generates anywhere else).
 
-**Known, documented limitation**: `layout:` is chosen once, at `sgo
-init` time — the same moment HTTP framework and persistence engine
-already are, and no less final. Changing it on an already-generated
-project isn't supported in v1: safe regeneration finds an owned file by
-its *current* expected path, so moving that path out from under
-already-generated files needs a real migration (relocate files, fix
-package import paths) this phase doesn't build. Logged in PLAN.md's
-Non-goals rather than left as a silent trap.
+**`internal/infrastructure/`** replaces `internal/adapter/`:
+`persistence/<engine>/` holds the same generated repository adapters as
+today, now implementing the aggregate-aware repository interface — a
+value object maps via GORM's native embedded-struct support in ORM
+mode, not a new mapping mechanism. `transport/{http,grpc}/` are the
+same HTTP/gRPC adapters as today, relocated, still mapping wire
+messages to Command/Query DTOs and calling the application service.
+`bootstrap/wire_gen.go` keeps today's composition-root role, relocated
+under `infrastructure/` to fit the new three-layer top level, now also
+wiring the no-op `EventPublisher`. `mapper.go` moves to live beside
+each engine's adapter (`infrastructure/persistence/<engine>/mapper.go`)
+rather than one shared `mapper/` package, since SQL-column vs.
+Mongo-document mapping concerns are already engine-specific. No
+`infrastructure/clients/` in v1 — nothing in sgo today generates an
+outbound third-party API client of any kind (PLAN.md Non-goals).
+
+**Known, documented limitation, carried over from the earlier version
+of this section unchanged**: this architecture is chosen once, at `sgo
+init` time — changing it on an already-generated project isn't
+supported (safe regeneration finds an owned file by its *current*
+expected path and shape; retargeting either needs a real migration this
+phase doesn't build). Logged in PLAN.md's Non-goals.
 
 ## 18. `sgo list endpoints` **(planned, Phase 13)**
 
@@ -705,10 +758,13 @@ service-level path-prefix concept, only per-method rules — so a "root
 path" needs sgo's own small option, `option (sgo.base_path) = "/v1";`,
 a proto extension using a field number in the 50000–99999
 organization-reserved range (proto's own convention for exactly this:
-an org's internal, non-`googleapis`-registered extensions). Applies to
-every route on that service — annotation-derived or convention-derived
-alike — as a drop-in replacement for today's hardcoded `/api/v1` prefix
-(§8.1) when left unset, so a proto that doesn't opt in sees no change.
+an org's internal, non-`googleapis`-registered extensions). A new field
+on `sgo/options.proto`, the file §17 (Phase 12) vendors for its own
+domain-modeling options — not a second vendored file for this one
+option. Applies to every route on that service — annotation-derived or
+convention-derived alike — as a drop-in replacement for today's
+hardcoded `/api/v1` prefix (§8.1) when left unset, so a proto that
+doesn't opt in sees no change.
 
 **`internal/codegen/httpgen.BuildRoutes`** gains one check per RPC
 before falling back to naming-convention derivation: does this method
@@ -755,10 +811,10 @@ Two decisions locked in via `AskUserQuestion` before any code:
   the fixed CRUD set, extended to cover the common single-field-query
   shape too.
 
-**`sgo/options.proto`** (vendored, §20/Phase 15) gains two
-`MethodOptions` extensions, alongside `(sgo.base_path)`'s
-`ServiceOptions` one — one small vendored file serving both features,
-not two:
+**`sgo/options.proto`** (vendored by §17/Phase 12, extended by
+§20/Phase 15 for `(sgo.base_path)`) gains two more `MethodOptions`
+extensions — one vendored file accumulating fields across three
+phases, not three separate vendored files:
 
 - **`option (sgo.repository_query) = true;`** — marks the RPC as also
   needing a repository-port counterpart, generated alongside its usual
@@ -858,7 +914,7 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
 | 1 | Binary renamed `sunny` → `sgo`; module path (`github.com/wahyurudiyan/sunny-go`) unchanged. | Matches the requested command name without a disruptive module-path/import rewrite. |
 | 2 | Retire `internal/templates/` and `internal/generate/` rather than adapt them. | ~85% of the existing template code was already dead (see prior analysis); the new hexagonal layout and generated/owned file split are a different enough shape that adapting in place would cost more than a clean rebuild under `internal/codegen/`. |
 | 3 | Generated vs. owned code is split by **file**, not by AST-merged sections within one file. | Far lower risk of corrupting hand-written logic; the AST-append step is scoped to *adding missing method stubs only*, never rewriting existing bodies. |
-| 4 | Domain entities are hand-shaped Go structs, decoupled from protobuf wire types, mapped via a generated adapter-layer mapper. | Keeps `internal/core` free of protobuf dependencies, consistent with hexagonal architecture; wire format can evolve without forcing domain changes. |
+| 4 | Domain entities are hand-shaped Go structs, decoupled from protobuf wire types, mapped via a generated adapter-layer mapper. **§17 (Phase 12, planned)** substantially extends this — aggregates, value objects, and domain events replace the plain flat-struct model — while keeping this decision's core property (no protobuf types in the domain layer) unchanged. | Keeps `internal/core` free of protobuf dependencies, consistent with hexagonal architecture; wire format can evolve without forcing domain changes. |
 | 5 | ~~`buf` is the primary proto toolchain~~ **Revised (Phase 2):** descriptors are compiled with `bufbuild/protocompile` (pure Go); `contract/gen` is produced by running the real `protoc-gen-go`/`protoc-gen-go-grpc` plugins via `go run <module>@<version>`. No `buf` or `protoc` binary is required at all. | Fully resolves the "buf as a hard prerequisite" open question below rather than just picking a side: a Go toolchain is the only prerequisite, and it's one `sgo` already assumes (it generates Go code). Output is byte-identical to what `protoc`/`buf` would produce, since the same plugins do the generation. |
 | 6 | GORM for ORM-mode SQL persistence. | Most widely adopted Go ORM, supports both Postgres and MySQL, reduces the adapter surface area to build/maintain. |
 | 7 | Elasticsearch and Redis get their own ports (`search`, `cache`), not folded into the repository port. | Their access patterns (query DSL, key/TTL) don't fit a CRUD repository interface; forcing them into one would leak abstraction. |

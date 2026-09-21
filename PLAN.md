@@ -499,88 +499,206 @@ not proper".
 wizard group render at the same horizontal position, verified against a
 real pty capture, with a spec catching a regression.
 
-## Phase 12 — Configurable, simplified project layout **(planned)**
+## Phase 12 — Replace the generated architecture with DDD tactical patterns **(planned)**
 
-Full design in ARCHITECTURE.md §15. Decided via `AskUserQuestion` before
-any code: layout customization is a `layout:` section in `sgo.yaml`
-itself (a small DSL, not a separate config file), and the *default*
-layout changes too, not just gains an escape hatch — the current
-default (`internal/core/{domain,port/{in,out},service}`,
-`internal/adapter/{in/{http,grpc},out/{persistence,cache,search},mapper}`)
-nests up to 6 directories deep for a single generated file, which is
-the concrete thing "hard to understand" names.
+**By far the largest, riskiest phase in this plan — larger than
+everything else in this batch combined.** Redefined from an earlier,
+much smaller "flatten the current layout, add a `layout:` override"
+version of this phase, per an explicit follow-up decision
+(`AskUserQuestion`): this isn't a directory rename any more. sgo's
+generated architecture moves from today's flat CRUD-hexagonal model
+(one struct per proto message, a fixed 5-method repository, no domain
+events, no invariant enforcement) to real DDD tactical patterns —
+aggregates that enforce invariants, value objects, domain events,
+CQRS-separated application services — **replacing the current default
+outright**, not as a selectable alternative alongside it. Full design
+in ARCHITECTURE.md §17.
 
-- [ ] **Simplified default layout** — drop the `core`/`adapter` wrapper
-      directories and the `in`/`out` sub-grouping entirely; everything
-      that's currently under `internal/core/*` or `internal/adapter/*`
-      moves one level up, directly under `internal/`:
-      ```
-      internal/
-      ├── domain/<entity>/
-      ├── port/                  # usecase + repository + cache + search, all here
-      ├── service/
-      ├── http/<framework>/
-      ├── grpc/
-      ├── persistence/<engine>/
-      ├── cache/<engine>/
-      ├── search/<engine>/
-      ├── mapper/
-      └── bootstrap/
-      ```
-      The driving/driven (`in`/`out`) distinction was mostly serving the
-      directory tree, not the reader — `<Entity>Usecase` vs.
-      `<Entity>Repository` already say which is which by name once
-      they're just files in `internal/port/`. Cuts the deepest path
-      from 6 directories to 4 (`internal/persistence/postgres/...`).
-- [ ] **`internal/codegen/layout`** — one small package every other
-      `internal/codegen/*gen` package asks "where does this file go?"
-      instead of hardcoding `filepath.Join(...)` itself. A `layout.Slot`
-      enum (`Domain`, `Port`, `Service`, `HTTP`, `GRPC`, `Persistence`,
-      `Cache`, `Search`, `Mapper`, `Bootstrap`, `Cmd`) resolves to a path
-      template (`{entity}`, `{framework}`, `{engine}`, `{project}`
-      placeholders), defaulting to the simplified layout above; a
-      `layout:` section in `sgo.yaml` overrides any subset of slots,
-      the rest keep their default.
-      ```yaml
-      layout:
-        persistence: internal/store/{engine}   # only this one customized
-      ```
-- [ ] Prototype the resolver against **one** generator package first
-      (`internal/codegen/core`, the smallest) before rolling it out to
-      the other ~9 — same risk-reduction Phase 2 used for safe
-      regeneration ("a small throwaway spike... in case it's messier
-      than expected"). Confirm it doesn't break §6's safe-regeneration
-      file-finding before touching `httpgen`, `sqlgen`, `mongogen`,
-      `cachegen`, `searchgen`, `grpcgen`, `wiregen`, the mapper
-      generator, or `project.Scaffold`.
-- [ ] `layout:` is set at `sgo init` time, same as HTTP framework or
-      persistence engine already are. **Known limitation, documented
-      rather than silently unsupported:** changing `layout:` after a
-      project has already been generated isn't supported in v1 — safe
-      regeneration (§6) finds owned files by their *current* expected
-      path, so moving that path out from under already-generated files
-      needs a real migration step this phase doesn't build. Logged as a
-      Non-goal below.
-- [ ] The interactive wizard and web UI aren't extended with a
-      layout-editing UI in this phase — `sgo.yaml` is still a plain text
-      file either surface can point someone at; a dedicated UI for it
-      is a follow-up, not required to ship the underlying capability.
-- [ ] Update every path mentioned in ARCHITECTURE.md §3/§8, docs/CLI.md,
-      and the e2e specs' own path assertions to the new default.
-- [ ] Ginkgo specs: `internal/codegen/layout`'s resolver (default
-      resolution per slot, override-one-keep-rest, unknown slot key
-      rejected with a clear error), plus one full generate-code run
-      against a project with a custom `layout:` override, asserting the
-      overridden slot's files land at the custom path and every other
-      slot still lands at its default.
+**Read this note if you only read one thing in this phase:** proto3
+has no native way to say "this message is an aggregate root with these
+invariants" — plain RPCs and messages don't carry that meaning by
+themselves. Getting from "proto file" to "real enforced business
+rules" needs *something* sgo can mechanically act on beyond today's
+message/field types. The concrete answer below is real, standards-based
+proto extensions (the same "vendor a real spec, don't invent one"
+principle already used for `google.api.http` and OpenAPI's meta-schemas)
+rather than a second hand-rolled modeling file — proto stays the only
+source of truth (§2/Decision #8's principle, unbroken). That's a
+specific technical proposal, not something the earlier `AskUserQuestion`
+round drilled into — flagged here explicitly for you to sanity-check
+before implementation starts, same as every other phase's design gets
+reviewed via this PR before code.
 
-**Exit criteria:** a freshly generated project's default layout is
-`internal/{domain,port,service,http,grpc,persistence,cache,search,
-mapper,bootstrap}` (no `core`/`adapter` wrapper, no `in`/`out`); a
-project with a `layout:` override in `sgo.yaml` gets exactly the
-customized slots at their custom paths, everything else unchanged, and
-still passes the full existing e2e suite (init → generate proto → hand
-edit → generate code → `go build`) at the new default paths.
+Decided via `AskUserQuestion`: **full semantic upgrade**, not a cosmetic
+rename (real invariant enforcement, real event collection); **replaces
+the default outright**, no permanent dual-style selector; **event bus
+(Kafka/RabbitMQ/NATS) is explicitly deferred** — this phase builds the
+seam (an `EventPublisher` interface + a real no-op default), not a
+broker adapter, since a real pluggable message-bus system is its own
+undertaking and you mentioned having your own idea for that shape to
+bring later.
+
+### Vendored proto options + validation (the foundation everything else needs)
+
+- [ ] **`sgo/options.proto`** (vendored, `go:embed`, pure-Go compiler
+      resolves it — no `protoc`/`buf` binary, same property Decision #5
+      already established): `MessageOptions` extensions
+      `(sgo.aggregate_root)`, `(sgo.value_object)`, `(sgo.domain_event)`;
+      `MethodOptions` extensions `(sgo.command)`/`(sgo.query)` (explicit
+      CQRS override when the naming convention below doesn't fit). This
+      file is now the *origin* of sgo's custom-options mechanism —
+      Phases 15/16 (`(sgo.base_path)`, `(sgo.repository_query)`,
+      `(sgo.hide_route)`) add fields to this same file rather than each
+      vendoring their own, and are resequenced after this phase so they
+      can (see Sequencing notes).
+- [ ] **Vendor `buf/validate/validate.proto`** (protovalidate — the
+      modern, widely-adopted successor to `protoc-gen-validate`; CEL-
+      expression field/message constraints, e.g.
+      `option (buf.validate.field).string.min_len = 1;`) the same way,
+      plus a new direct dependency in a *generated project's* `go.mod`:
+      `github.com/bufbuild/protovalidate-go`. Real invariant enforcement
+      without sgo hand-rolling CEL evaluation itself — a generated
+      `Validate() error` method calls the real library against the
+      compiled descriptor's constraints.
+
+### Domain layer (`internal/domain/`)
+
+- [ ] **Role inference**: within one proto file, the message marked
+      `(sgo.aggregate_root)` (or matching the entity name by the
+      existing convention, if none is explicitly marked) is the
+      Aggregate Root; a message marked `(sgo.value_object)` generates an
+      immutable Go type (no setters, constructor-validated); a message
+      marked `(sgo.domain_event)` generates a plain event struct in
+      `events.go`; anything else referenced by the aggregate becomes a
+      child Entity within it.
+- [ ] **Generated sibling** (`<context>/<context>_gen.go`, same
+      generated/owned split principle as today, Decision #3): the flat
+      field struct (as today), plus new scaffolding — an internal
+      `events []DomainEvent` slice, a `PullEvents() []DomainEvent`
+      method, and a `Validate() error` method wired to protovalidate
+      against whatever `buf.validate` constraints the message declares.
+- [ ] **Owned `aggregate.go`**, same contract as today's owned
+      `<entity>.go` (created once, never overwritten): this is where
+      real business methods and invariant-triggered event appends
+      actually get hand-written — sgo scaffolds the *mechanism*
+      (validation, event collection), not arbitrary business rules it
+      has no way to know.
+- [ ] **`domain/<context>/repository.go`** — same port role as today's
+      repository port (and still open to Phase 16's
+      `(sgo.repository_query)` extension), now typed against the
+      aggregate root instead of a flat struct.
+- [ ] **`domain/<context>/errors.go`** — sentinel errors, same as
+      today's port-level errors, relocated/renamed to match.
+- [ ] **Shared kernel** (`domain/shared/`): a value-object message
+      declared under `contract/pb/shared/*.proto` and `import`-ed by
+      multiple entity protos (e.g. `shared.Money` used by both `Order`
+      and `Invoice`) generates once into `internal/domain/shared/`,
+      not duplicated per context — the proto resolver already handles
+      cross-file imports (it resolves `google/protobuf/*` and, after
+      Phase 15, `google/api/*`); this extends the same resolution to a
+      project's own `contract/pb/shared/` imports. Idempotency matters
+      here specifically: regenerating two different entities that both
+      reference `shared.Money` must produce identical output, not a
+      conflict.
+
+### Application layer (`internal/application/`) — CQRS
+
+- [ ] **`application/<context>/{command,query}.go`** — an RPC's request
+      message becomes a `<Rpc>Command` or `<Rpc>Query` DTO, classified
+      by the same naming convention HTTP routing already uses
+      (`Create`/`Update`/`Delete` → command, `Get`/`List` → query),
+      overridable per-RPC via `(sgo.command)`/`(sgo.query)` for anything
+      that doesn't fit — the same "convention with an explicit override"
+      shape Phase 15/16's options already use, kept consistent rather
+      than inventing a third pattern.
+- [ ] **`application/<context>/service.go`** — replaces today's
+      `<entity>_service.go`; same owned-file, stub-appended-per-new-
+      command/query contract (Decision #12), but now actually
+      orchestrates: load the aggregate via the repository → call its
+      mutating method (which validates + collects events internally,
+      per the domain-layer scaffolding above) → save via the repository
+      → pull events and hand them to the `EventPublisher` seam. A real
+      behavioral upgrade over today's service, which calls the
+      repository directly with no aggregate/invariant/event step at
+      all.
+- [ ] **`application/ports/event_publisher.go`** — the seam the future
+      messaging phase plugs into:
+      ```go
+      type EventPublisher interface {
+          Publish(ctx context.Context, events ...domain.Event) error
+      }
+      ```
+      Generated with one real, working default: a no-op implementation
+      wired into `wire_gen.go`. No `infrastructure/messaging/` package
+      in v1 — an empty placeholder directory with nothing generated
+      into it isn't something sgo does anywhere else, so it isn't
+      introduced here either; the interface alone is the extension
+      point.
+
+### Infrastructure layer (`internal/infrastructure/`)
+
+- [ ] **`infrastructure/persistence/<engine>/`** — same generated
+      repository adapters as today (Postgres/MySQL/MongoDB/memory),
+      relocated, now implementing the aggregate-aware repository
+      interface. For SQL/GORM mode, a value object (e.g. `Money`) maps
+      via GORM's native embedded-struct support (`gorm:"embedded"`),
+      not a new mapping mechanism.
+- [ ] **`infrastructure/transport/{http,grpc}/`** — same HTTP/gRPC
+      adapters as today, relocated; still map wire proto messages to
+      Command/Query DTOs and call the application service, same shape
+      as before under new names.
+- [ ] **`infrastructure/bootstrap/wire_gen.go`** — same composition-root
+      role as today's `internal/bootstrap/wire_gen.go`, relocated under
+      `infrastructure/` to fit the new three-layer top level; now also
+      wires the no-op `EventPublisher`.
+- [ ] **No `infrastructure/clients/`** in v1 — the reference structure's
+      outbound-API-client convention (its `Stripe` example) has nothing
+      concrete behind it in sgo today; an empty placeholder directory
+      isn't generated for the same reason `messaging/` isn't.
+- [ ] **`internal/adapter/mapper/`** → relocated under
+      `infrastructure/persistence/<engine>/mapper.go` per adapter
+      package (matching the reference structure's placement), rather
+      than one shared `mapper/` package — each engine's mapping concerns
+      (SQL columns vs. Mongo documents) are already engine-specific.
+
+### Everything downstream
+
+- [ ] `cmd/<name>/main.go` unchanged in role (owned, thin, calls
+      `infrastructure/bootstrap`) — the reference structure's own
+      comment agrees ("Wire dependencies & boot adapters").
+- [ ] Update every path/shape mentioned in ARCHITECTURE.md §3/§5/§8,
+      docs/CLI.md, and the e2e specs' own path/content assertions —
+      this phase changes far more of them than the original
+      layout-only version would have.
+- [ ] Ginkgo specs, by sub-area above: role inference (aggregate root /
+      value object / domain event classification, including the
+      convention fallback when nothing's explicitly marked);
+      protovalidate wiring (a violated constraint actually fails
+      `Validate()`, generated against a real vendored constraint, not a
+      hand-rolled check); event collection (`PullEvents` actually
+      returns what an owned aggregate method appended, and is called by
+      the generated application service); the shared-kernel dedup case
+      (two entities referencing the same shared value object produce
+      identical generated output, not a conflict); GORM embedded-value-
+      object round-tripping against a real local Postgres, same standard
+      the existing persistence suites already hold adapters to; a full
+      CLI e2e spec through the new layout end to end.
+
+**Exit criteria:** a freshly generated project has the
+`domain/application/infrastructure` layout above; an aggregate's
+generated `Validate()` actually rejects data violating a real
+`buf.validate` constraint; a hand-written aggregate method's appended
+event is retrievable via `PullEvents()` and reaches the no-op
+`EventPublisher`; a shared value object referenced by two entities
+generates once, not twice; the full e2e suite (init → generate proto →
+hand edit → generate code → `go build`) passes against the new
+architecture end to end.
+
+**Known, documented limitation carried over unchanged:** this
+architecture is chosen once, at `sgo init` time (there's no reason to
+think a later `layout:`-style override wouldn't hit the exact same
+already-generated-files problem the earlier version of this phase
+flagged — logged in Non-goals below, not solved by this phase either).
 
 ## Phase 13 — `sgo list endpoints` **(planned)**
 
@@ -668,7 +786,10 @@ instead. Every existing generated project keeps working unchanged.
       no concept of a service-level path prefix, only per-method rules,
       so a root path needs sgo's own small option:
       `option (sgo.base_path) = "/v1";` on the service (a proto
-      extension in the 50000–99999 organization-reserved range). Applies
+      extension in the 50000–99999 organization-reserved range) — a new
+      field on `sgo/options.proto`, the same vendored file Phase 12
+      already introduces for its own domain-modeling options
+      (`(sgo.aggregate_root)` etc.), not a second vendored file. Applies
       to every route on that service, annotation-derived or
       convention-derived — replacing today's hardcoded `/api/v1` prefix
       (§8.1) with this as the default when unset, so nothing changes for
@@ -734,9 +855,10 @@ adapter edits for the common case — the same "always runnable" promise
 Decision #15 already makes for the fixed CRUD set.
 
 - [ ] **`option (sgo.repository_query) = true;`** on an RPC method —
-      extends the same vendored `sgo/options.proto` Phase 15 introduces
-      for `(sgo.base_path)` (one small vendored file, not two), this
-      time a `MethodOptions` extension. Marks that RPC as *also* needing
+      another field on the same vendored `sgo/options.proto` Phase 12
+      introduces (extended by Phase 15 for `(sgo.base_path)`), not a
+      third vendored file. A `MethodOptions` extension. Marks that RPC
+      as *also* needing
       a repository-port counterpart, generated alongside its usual
       usecase-port method, HTTP route, and gRPC method — by design, per
       the decision above, this makes the RPC both a public endpoint and
@@ -858,21 +980,31 @@ contradicts `docs/CLI.md` or the actual current layout.
   supplied OpenAPI spec (contract testing) — the Phase 8 checker
   validates a document's own well-formedness, not code-vs-spec
   consistency. Revisit only if requested.
-- Changing `layout:` in `sgo.yaml` after a project has already been
-  generated — Phase 12 picks the layout at `sgo init` time only; safe
-  regeneration (§6) finds owned files at their *current* expected path,
-  so retargeting that path for an already-generated project needs a real
-  migration step (move files, update package paths/imports) this phase
-  doesn't build. Revisit if it turns out people want to change layout
-  mid-project rather than only choosing it up front.
-- A layout-editing UI in the wizard or `sgo ui` — `sgo.yaml`'s `layout:`
-  section is hand-edited YAML in v1, same as any other manifest field
-  before it got wizard/web-UI treatment. Revisit once the underlying
-  capability (Phase 12) has seen real use.
+- **Changing the generated architecture after a project already
+  exists** — Phase 12's DDD structure is chosen once, at `sgo init`
+  time, same as HTTP framework or persistence engine already are; safe
+  regeneration (§6) finds owned files at their *current* expected path
+  and shape, so retargeting that for an already-generated project needs
+  a real migration this phase doesn't build.
+- **A selectable architecture style (DDD vs. today's simpler
+  hexagonal)** — explicitly decided against (`AskUserQuestion`): Phase
+  12 replaces the default outright, it doesn't add a second option
+  alongside it. Revisit only if a real need for the simpler shape
+  resurfaces.
+- **A real event-bus/message-broker adapter** (Kafka/RabbitMQ/NATS) —
+  explicitly deferred (`AskUserQuestion`): Phase 12 builds the
+  `EventPublisher` seam and a working no-op default, not a broker
+  integration. Revisit once there's a concrete design for it (mentioned
+  as a separate idea to bring later).
+- **`infrastructure/clients/`** (outbound third-party API clients, e.g.
+  a Stripe client) — nothing in sgo today generates an outbound API
+  client of any kind; an empty placeholder directory isn't generated
+  for a capability that doesn't exist yet, consistent with the same
+  reasoning for `infrastructure/messaging/` above.
 - A generic templating/plugin system for arbitrary custom generators —
-  Phase 12's `layout:` only relocates *where* sgo's own fixed set of
-  generated files land, it doesn't let someone add a wholly new kind of
-  generated file. Nobody's asked for that yet.
+  Phase 12 changes *what* sgo's fixed set of generators produce and
+  *where* it lands, it doesn't let someone add a wholly new kind of
+  generated file of their own design. Nobody's asked for that yet.
 - A repository-only method that never becomes a public RPC — Phase 16's
   declaration mechanism is deliberately an option on an existing RPC
   (`AskUserQuestion`-confirmed), which always keeps that RPC's usecase
@@ -906,27 +1038,34 @@ contradicts `docs/CLI.md` or the actual current layout.
   becomes the priority over Phases 2–4 for some other reason.
 - Phase 11 (wizard polish) ships first in this batch — small, and
   entirely independent of 12–17.
-- Phase 12 (layout) is the riskiest and most novel piece of this batch —
-  it touches every generator package that writes a file — so it's
-  sequenced right after Phase 11 and before anything else in the batch:
-  Phases 13–16 all consume paths Phase 12 changes, and there's no reason
-  to build on top of a layout that might still move.
+- **Phase 12 (DDD architecture replacement) is now by a wide margin the
+  riskiest, largest, and most foundational piece of this entire batch —
+  larger than Phases 13–17 combined.** It touches every generator
+  package that writes a file, same reasoning the original layout-only
+  version of this phase had, but now also introduces the vendored
+  `sgo/options.proto` custom-options mechanism Phases 15 and 16 both
+  build on (`(sgo.base_path)`, `(sgo.repository_query)`,
+  `(sgo.hide_route)` all become fields on the file Phase 12 vendors,
+  not separately vendored). Sequenced right after Phase 11 and before
+  everything else for both reasons at once: Phases 13–16 consume paths
+  Phase 12 changes, and Phases 15/16 consume options infrastructure
+  Phase 12 introduces — building either on top of a Phase 12 that
+  hasn't landed yet would mean redoing work.
 - Phases 13 and 14 are independent of each other and of Phase 15;
   sequenced 13-then-14 only because `sgo list endpoints` is the smaller
   of the two.
-- Phase 15 (proto-defined HTTP paths) depends on nothing in this batch
-  functionally, but is sequenced after 12–14 anyway: it's the largest,
-  most novel piece here (new proto vendoring, a new custom option, per-
-  framework path-parameter translation), and Phases 13/14 are more
-  useful to have landed first since Phase 15 makes both of them richer
-  for free (proto-defined routes show up in `sgo list endpoints` and
-  generated OpenAPI docs without either needing changes) rather than the
-  reverse.
-- Phase 16 (repository-port methods) is sequenced right after Phase 15,
-  not independently earlier, because it reuses the same vendored
-  `sgo/options.proto` file Phase 15 introduces (`(sgo.base_path)`) —
-  adding `(sgo.repository_query)`/`(sgo.hide_route)` to the same file
-  once, rather than vendoring proto-option infrastructure twice.
-- Phase 17 (docs) is deliberately last — it documents the layout,
-  commands, and proto conventions Phases 11–16 land with, not a snapshot
-  from partway through.
+- Phase 15 (proto-defined HTTP paths) depends on nothing *functionally*
+  in this batch beyond Phase 12's options mechanism, but is sequenced
+  after 12–14 anyway: it's the second-largest, most novel piece here
+  (a second vendored proto extension, per-framework path-parameter
+  translation), and Phases 13/14 are more useful to have landed first
+  since Phase 15 makes both of them richer for free (proto-defined
+  routes show up in `sgo list endpoints` and generated OpenAPI docs
+  without either needing changes) rather than the reverse.
+- Phase 16 (repository-port methods) is sequenced right after Phase 15
+  for the same options-file reason Phase 12 documents above — one
+  vendored file, extended twice, not vendored three times.
+- Phase 17 (docs) is deliberately last — it documents the architecture,
+  commands, and proto conventions Phases 11–16 land with, not a
+  snapshot from partway through. Given how much Phase 12 alone changes,
+  this phase is doing real work here, not a light touch-up.

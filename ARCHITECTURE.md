@@ -487,6 +487,53 @@ Playwright, screenshotted at each step (create-project form → dashboard
 → service created → code generated → sgo.yaml/proto editors), confirming
 the DOM-rendering side actually works, not just the API it calls.
 
+## 13. OpenAPI documentation **(planned, Phase 8)**
+
+`sgo generate openapi` produces a project-wide OpenAPI document
+describing the generated REST API — a **generated output** of the
+existing proto-first pipeline, the same relationship `contract/gen` has
+to `contract/pb`, never a second source of truth alongside proto. This
+was an explicit decision (`AskUserQuestion`, not assumed): OpenAPI does
+not become an alternative way to scaffold routes/code, and the checker
+validates a document's own well-formedness, not "does the code match
+this spec" (see PLAN.md's Non-goals).
+
+- **Definition** (`internal/codegen/openapigen`): one shared Go type
+  model (`Document`, `Info`, `PathItem`, `Operation`, `Parameter`,
+  `RequestBody`, `Response`, `Schema`, `Components`) for both OpenAPI
+  3.0.x and 3.1.x — the two are close enough structurally that a single
+  IR encoded two ways (a `Version` switch handling `nullable` vs.
+  `type: [X, "null"]`, 3.1-only `jsonSchemaDialect`) is simpler than two
+  parallel type sets, the same reasoning as one `Kind` enum serving every
+  proto scalar type (§5) rather than per-consumer type sets.
+- **Generator**: for every name in `sgo.yaml`'s `services` list,
+  recompiles `contract/pb/<name>.proto` (proto recompilation is already
+  cheap and side-effect-free — the same thing `sgo generate code` does
+  every run) and calls `httpgen.BuildRoutes(file, name)` — the exact
+  framework-agnostic function `internal/codegen/httpgen/route.go`
+  already uses to drive the Gin/Echo/Chi templates — to get each
+  service's routes. This is the load-bearing design choice: reusing the
+  real route-derivation function means the OpenAPI doc structurally
+  cannot describe an endpoint the generated HTTP adapter doesn't
+  actually serve, without a separate consistency check. Writes one
+  `docs/openapi.<ext>` (yaml or json, per `sgo.yaml`/flags),
+  unconditionally overwritten every run — never hand-edited, same
+  contract as `contract/gen`.
+- **Checker**: validates a document (bytes in, parsed as either JSON or
+  YAML) against the official OpenAPI 3.0 or 3.1 JSON Schema meta-schema,
+  auto-selected from the document's own `openapi:` version field.
+  Real JSON Schema validation (a maintained Go library, e.g.
+  `santhosh-tekuri/jsonschema/v5`, plus the two meta-schema JSON files
+  vendored via `go:embed` — no network fetch, consistent with §2's "no
+  `protoc`/`buf` install required" stance extended to this IDL too) was
+  chosen over a hand-rolled validator scoped only to what sgo itself can
+  produce, specifically so `sgo openapi validate` gives real answers on
+  arbitrary imported files, not just sgo's own output.
+- **Config**: `sgo.yaml` gains `openapi: {version, format}` (§7's
+  pattern — a selection made once and reused, not re-specified on every
+  command), settable via `sgo init --openapi-version`/`--openapi-format`
+  and editable later through `sgo ui`'s existing raw-YAML editor (§11).
+
 ## Testing strategy
 
 All Go tests — in `sgo` itself and in what it generates — are

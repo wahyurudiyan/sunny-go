@@ -399,6 +399,78 @@ to write honestly.
       Redis test assumptions weren't documented anywhere) and a mention
       of the new CLI-subprocess e2e suite.
 
+## Phase 8 — OpenAPI documentation
+
+All Phases 0–7 are done; this is new scope, not part of the original 8
+requirements. Full design in ARCHITECTURE.md §13. Decided via
+`AskUserQuestion` before any code: OpenAPI stays a generated **output**
+of the existing proto-first pipeline (proto is still the only source of
+truth, exactly like `contract/gen`), not a second, competing input —
+and real spec-compliance checking uses an actual JSON Schema validator
+against the official vendored meta-schemas, not a hand-rolled subset
+validator.
+
+- [ ] **Definition** — `internal/codegen/openapigen`'s `Document`,
+      `Info`, `PathItem`, `Operation`, `Parameter`, `RequestBody`,
+      `Response`, `Schema`, `Components` types: one shared Go model for
+      both OpenAPI 3.0.x and 3.1.x (they're ~90% identical structurally;
+      a `Version` value on the encoder handles the real differences —
+      3.0's `nullable: true` vs. 3.1's `type: [X, "null"]`, 3.1-only
+      `jsonSchemaDialect`). Encodes to YAML or JSON.
+- [ ] **Generator** — walks every service in `sgo.yaml`'s `services`
+      list (not just one entity), recompiling each one's proto and
+      calling `httpgen.BuildRoutes` — the exact same
+      framework-agnostic route-derivation function `sgo generate code`
+      already uses for Gin/Echo/Chi — so the OpenAPI doc can't drift
+      from what the generated HTTP adapter actually serves. Writes one
+      project-wide `docs/openapi.<ext>`, fully regenerated every run
+      (same philosophy as `contract/gen`/`wire_gen.go` — no
+      incremental-merge risk). New command: `sgo generate openapi
+      [--version 3.0|3.1] [--format yaml|json]`.
+- [ ] **Checker** — validates a document against the real OpenAPI
+      3.0/3.1 JSON Schema meta-schemas (official ones from the OpenAPI
+      Initiative, vendored via `go:embed` — no network fetch at
+      generate/validate time, same stance as not requiring `protoc`/
+      `buf`). Runs automatically right after `generate openapi` writes
+      the file (fails loudly if sgo's own generator produced something
+      invalid — a safety net, not just a user-facing feature). Also
+      reachable standalone: `sgo openapi validate [path]`, json or
+      yaml, 3.0 or 3.1 auto-detected from the document's own `openapi:`
+      field, defaulting to the project's own generated doc if no path
+      is given but working on any file (sgo-generated or hand-authored/
+      imported).
+- [ ] New dependency in **sgo's own** `go.mod` (not just generated
+      projects — this is a tool-level dependency like `protocompile`,
+      not a generated-code-only one like `gorm`): a maintained Go JSON
+      Schema validator, e.g. `github.com/santhosh-tekuri/jsonschema/v5`
+      (multi-draft support covers both the 3.0 meta-schema's older
+      draft and 3.1's JSON Schema 2020-12 alignment).
+- [ ] `sgo.yaml` gains an `openapi:` section (`version`, `format`),
+      persisted at `sgo init` via new `--openapi-version`/
+      `--openapi-format` flags (defaults: `3.0`, `yaml`), editable later
+      through `sgo ui`'s existing raw-YAML editor — same pattern as
+      every other persisted selection (§7).
+- [ ] Ginkgo specs: `openapigen` content-check specs (per version ×
+      format), a spec proving a deliberately-broken document fails the
+      checker with a real error (not a false pass), and a spec proving
+      the routes in a generated `docs/openapi.yaml` match
+      `httpgen.BuildRoutes`'s output byte-for-byte for the same project
+      — the same "prove it, don't assume it" standard as
+      `webui_parity_test.go`.
+- [ ] `sgo ui` follow-up (separate from this phase unless it turns out
+      trivial): surface `docs/openapi.<ext>` in the dashboard, maybe
+      rendered with a read-only Swagger-UI-style viewer. Not committing
+      to this yet — flagged here so it isn't forgotten, not itemized as
+      required.
+
+**Exit criteria:** `sgo generate openapi` on a project with at least one
+generated service produces a `docs/openapi.yaml` (or `.json`) that (a)
+passes `sgo openapi validate` against the real OpenAPI meta-schema, and
+(b) round-trips into a real OpenAPI tool (e.g. loads cleanly in Swagger
+UI or `openapi-generator validate`, checked by hand once as the human
+sanity check no automated meta-schema check can fully replace) for both
+3.0 and 3.1 output.
+
 ## Non-goals (for now)
 
 - Multi-service monorepo orchestration beyond one `sgo.yaml` per repo.
@@ -406,6 +478,13 @@ to write honestly.
 - Auto-migrating hand-written code when a proto field/method is removed
   (the compiler is the safety net, per ARCHITECTURE §6.4).
 - Bundling/vendoring `buf` itself — documented prerequisite for now.
+- OpenAPI as an input (scaffolding routes/code from a hand-written
+  spec) — considered for Phase 8 and explicitly declined; proto stays
+  the only source of truth. Revisit only if requested.
+- Diffing a generated project's actual routes against an externally
+  supplied OpenAPI spec (contract testing) — the Phase 8 checker
+  validates a document's own well-formedness, not code-vs-spec
+  consistency. Revisit only if requested.
 
 ## Sequencing notes
 

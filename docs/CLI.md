@@ -172,6 +172,20 @@ and asserts byte-identical generated output
 (`internal/commands/webui_parity_test.go`). No auth, since it never
 listens on anything but loopback.
 
+## `sgo generate openapi` / `sgo openapi validate` **(planned, Phase 8)**
+
+```
+sgo generate openapi [--version 3.0|3.1] [--format yaml|json]
+sgo openapi validate [path]
+```
+
+Will generate a project-wide `docs/openapi.<ext>` from every registered
+service's already-derived HTTP routes (ARCHITECTURE §13) — a
+documentation output of the proto-first pipeline, not a second source of
+truth. `sgo openapi validate` checks a document (any path, or the
+project's own generated one by default) against the real OpenAPI 3.0/3.1
+JSON Schema, json or yaml.
+
 ## Removed/renamed from the current CLI
 
 | Current (`sunny`) | New (`sgo`) | Why |

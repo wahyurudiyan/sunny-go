@@ -23,6 +23,23 @@ a `.proto` contract, serving both HTTP and gRPC from a hexagonal
 - **`docs/CLI.md`** — command reference (implemented and planned).
 - **`CHANGELOG.md`** — release history (`sgo --version`).
 
+## Install
+
+Requires Go 1.25+.
+
+```
+go install github.com/wahyurudiyan/sunny-go/cmd/sgo@latest
+```
+
+This installs the `sgo` binary to `$(go env GOPATH)/bin` (make sure
+that's on your `PATH`). Pin a specific release with `@v0.0.1` instead of
+`@latest` — see `CHANGELOG.md`/the [releases page](https://github.com/wahyurudiyan/sunny-go/releases)
+for what each version contains.
+
+Building from a local clone works the same way any Go module does:
+`git clone` it, then `make build` (or `go build ./cmd/sgo`) — see
+Contributing below.
+
 ## Quick start
 
 ```
@@ -81,7 +98,7 @@ See `PLAN.md` for the current phase and what's in scope for it.
 ```
 make build   # bin/sgo
 make test    # go test ./... (Ginkgo specs)
-make dev     # go run ./cmd, no build step
+make dev     # go run ./cmd/sgo, no build step
 ```
 
 Most specs are self-contained (they generate into a temp dir and either

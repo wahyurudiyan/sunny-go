@@ -112,6 +112,37 @@ func (p Paths) MapperImportPath() string {
 	return path.Join(p.Module, "internal/adapter/mapper")
 }
 
+// AggregateDomainImportPath is DomainImportPath's Phase 12 (ARCHITECTURE.md
+// §17) successor: internal/domain/<entity>, not internal/core/domain/
+// <entity>. Named distinctly from DomainImportPath while both exist
+// side by side; GenerateCode switches over once the
+// application/infrastructure generators exist too (§17's project-wide
+// rewiring).
+func (p Paths) AggregateDomainImportPath() string {
+	return path.Join(p.Module, "internal/domain", p.Entity)
+}
+
+// EventImportPath is the shared internal/domain/event package
+// (ARCHITECTURE.md §17) every entity's domain events implement
+// DomainEvent through, so a single EventPublisher can accept events
+// from any of them.
+func (p Paths) EventImportPath() string {
+	return path.Join(p.Module, "internal/domain/event")
+}
+
+// ApplicationImportPath is internal/application/<entity> — the CQRS
+// command/query DTOs and application service (ARCHITECTURE.md §17).
+func (p Paths) ApplicationImportPath() string {
+	return path.Join(p.Module, "internal/application", p.Entity)
+}
+
+// ApplicationPortsImportPath is the shared internal/application/ports
+// package — EventPublisher and any other cross-entity application-layer
+// port.
+func (p Paths) ApplicationPortsImportPath() string {
+	return path.Join(p.Module, "internal/application/ports")
+}
+
 // entityTitle returns the exported (PascalCase-first-letter) form of an
 // entity name, e.g. "user" -> "User". Proto message/service names in our
 // own scaffold already follow this convention; this only matters when

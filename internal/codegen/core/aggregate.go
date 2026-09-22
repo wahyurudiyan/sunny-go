@@ -52,19 +52,21 @@ func GenerateAggregate(f *sgoproto.File, fd protoreflect.FileDescriptor, p Paths
 	}
 
 	genData := struct {
-		Package       string
-		AggregateName string
-		Aggregate     sgoproto.Message
-		ValueObjects  []sgoproto.Message
-		DomainEvents  []sgoproto.Message
-		ChildEntities []sgoproto.Message
+		Package         string
+		AggregateName   string
+		Aggregate       sgoproto.Message
+		ValueObjects    []sgoproto.Message
+		DomainEvents    []sgoproto.Message
+		ChildEntities   []sgoproto.Message
+		EventImportPath string
 	}{
-		Package:       p.Entity,
-		AggregateName: aggregateName,
-		Aggregate:     *aggregate,
-		ValueObjects:  valueObjects,
-		DomainEvents:  domainEvents,
-		ChildEntities: childEntities,
+		Package:         p.Entity,
+		AggregateName:   aggregateName,
+		Aggregate:       *aggregate,
+		ValueObjects:    valueObjects,
+		DomainEvents:    domainEvents,
+		ChildEntities:   childEntities,
+		EventImportPath: p.EventImportPath(),
 	}
 
 	genPath := filepath.Join(destDir, p.Entity+"_gen.go")
@@ -135,6 +137,19 @@ func GenerateDomainErrors(fd protoreflect.FileDescriptor, p Paths, destDir strin
 
 	path := filepath.Join(destDir, "errors.go")
 	return writeGoFile("templates/domain_errors_gen.go.tmpl", data, path)
+}
+
+// GenerateEventKernel writes internal/domain/event/event.go
+// (ARCHITECTURE.md §17): the DomainEvent interface every entity's
+// generated event structs implement, shared across entities (not
+// per-entity) so a single EventPublisher can accept events from any of
+// them. Fixed content, no hand-written part — always overwritten, once
+// per project rather than once per entity (safe to call once per
+// `sgo generate code` run; idempotent, since it's the same content
+// every time).
+func GenerateEventKernel(destDir string) error {
+	path := filepath.Join(destDir, "event.go")
+	return writeGoFile("templates/domain_event_kernel_gen.go.tmpl", struct{}{}, path)
 }
 
 func messageNames(mds []protoreflect.MessageDescriptor) []string {

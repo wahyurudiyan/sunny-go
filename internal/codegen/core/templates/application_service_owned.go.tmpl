@@ -1,0 +1,22 @@
+package {{.Package}}
+
+import (
+	"context"
+
+	domain "{{.DomainImportPath}}"
+	ports "{{.PortsImportPath}}"
+)
+
+type {{.Entity}}Service struct {
+	repo      domain.{{.Entity}}Repository
+	publisher ports.EventPublisher
+}
+
+func New{{.Entity}}Service(repo domain.{{.Entity}}Repository, publisher ports.EventPublisher) *{{.Entity}}Service {
+	return &{{.Entity}}Service{repo: repo, publisher: publisher}
+}
+{{range .Methods}}
+func (s *{{$.Entity}}Service) {{.Name}}(ctx context.Context, req *{{.ParamType}}) {{if .ReturnType}}({{.ReturnType}}, error){{else}}error{{end}} {
+	panic("sgo: TODO implement {{.Name}}")
+}
+{{end}}

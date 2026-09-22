@@ -88,11 +88,12 @@ var _ = Describe("GenerateAggregate", func() {
 		src := string(content)
 
 		Expect(src).To(ContainSubstring("type Order struct"))
-		Expect(src).To(ContainSubstring("events []DomainEvent"))
-		Expect(src).To(ContainSubstring("func (a *Order) PullEvents() []DomainEvent"))
+		Expect(src).To(ContainSubstring("events []event.DomainEvent"))
+		Expect(src).To(ContainSubstring("func (a *Order) PullEvents() []event.DomainEvent"))
+		Expect(src).To(ContainSubstring(`import event "demo/internal/domain/event"`))
 		Expect(src).To(ContainSubstring("type Money struct"))
 		Expect(src).To(ContainSubstring("type OrderPlacedEvent struct"))
-		Expect(src).To(ContainSubstring("func (OrderPlacedEvent) isDomainEvent() {}"))
+		Expect(src).To(ContainSubstring(`func (OrderPlacedEvent) EventName() string { return "OrderPlacedEvent" }`))
 		Expect(src).To(ContainSubstring("type OrderLine struct"))
 	})
 
@@ -120,6 +121,31 @@ var _ = Describe("GenerateAggregate", func() {
 		Expect(string(after)).To(ContainSubstring("hand-written"))
 	})
 
+	// buildProject assembles a throwaway module named "demo" (matching
+	// p.Module, since the generated files' own import paths are
+	// "demo/..." literals) containing the shared event kernel plus
+	// whichever domainDir files the caller lists, for a real go
+	// build/run to compile against.
+	buildProject := func(modName string, files ...string) string {
+		GinkgoHelper()
+		modDir := filepath.Join(root, modName)
+		Expect(os.MkdirAll(modDir, 0755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(modDir, "go.mod"), []byte("module demo\n\ngo 1.25.0\n"), 0644)).To(Succeed())
+
+		eventDir := filepath.Join(modDir, "internal", "domain", "event")
+		Expect(os.MkdirAll(eventDir, 0755)).To(Succeed())
+		Expect(core.GenerateEventKernel(eventDir)).To(Succeed())
+
+		orderPkgDir := filepath.Join(modDir, "internal", "domain", "order")
+		Expect(os.MkdirAll(orderPkgDir, 0755)).To(Succeed())
+		for _, name := range files {
+			data, err := os.ReadFile(filepath.Join(domainDir, name))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(os.WriteFile(filepath.Join(orderPkgDir, name), data, 0644)).To(Succeed())
+		}
+		return modDir
+	}
+
 	It("compiles as real Go code, with a hand-written aggregate method actually using the generated events field", func() {
 		ownedPath := filepath.Join(domainDir, "aggregate.go")
 		Expect(os.WriteFile(ownedPath, []byte(`package order
@@ -129,21 +155,11 @@ func (a *Order) MarkPlaced() {
 }
 `), 0644)).To(Succeed())
 
-		modDir := filepath.Join(root, "gobuild")
-		Expect(os.MkdirAll(modDir, 0755)).To(Succeed())
-		Expect(os.WriteFile(filepath.Join(modDir, "go.mod"), []byte("module aggregatetest\n\ngo 1.25.0\n"), 0644)).To(Succeed())
-
-		orderPkgDir := filepath.Join(modDir, "order")
-		Expect(os.MkdirAll(orderPkgDir, 0755)).To(Succeed())
-		for _, name := range []string{"order_gen.go", "aggregate.go"} {
-			data, err := os.ReadFile(filepath.Join(domainDir, name))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(os.WriteFile(filepath.Join(orderPkgDir, name), data, 0644)).To(Succeed())
-		}
+		modDir := buildProject("gobuild", "order_gen.go", "aggregate.go")
 
 		mainSrc := `package main
 
-import "aggregatetest/order"
+import "demo/internal/domain/order"
 
 func main() {
 	o := &order.Order{Id: "1"}
@@ -151,6 +167,9 @@ func main() {
 	events := o.PullEvents()
 	if len(events) != 1 {
 		panic("expected 1 event")
+	}
+	if events[0].EventName() != "OrderPlacedEvent" {
+		panic("expected OrderPlacedEvent")
 	}
 }
 `
@@ -176,17 +195,7 @@ func main() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(errSrc)).To(ContainSubstring("var ErrNotFound = errors.New"))
 
-		modDir := filepath.Join(root, "gobuild-repo")
-		Expect(os.MkdirAll(modDir, 0755)).To(Succeed())
-		Expect(os.WriteFile(filepath.Join(modDir, "go.mod"), []byte("module repotest\n\ngo 1.25.0\n"), 0644)).To(Succeed())
-
-		orderPkgDir := filepath.Join(modDir, "order")
-		Expect(os.MkdirAll(orderPkgDir, 0755)).To(Succeed())
-		for _, name := range []string{"order_gen.go", "aggregate.go", "repository.go", "errors.go"} {
-			data, err := os.ReadFile(filepath.Join(domainDir, name))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(os.WriteFile(filepath.Join(orderPkgDir, name), data, 0644)).To(Succeed())
-		}
+		modDir := buildProject("gobuild-repo", "order_gen.go", "aggregate.go", "repository.go", "errors.go")
 
 		cmd := exec.Command("go", "build", "./...")
 		cmd.Dir = modDir

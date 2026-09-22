@@ -170,12 +170,14 @@ introduces, so relocating them wasn't in that phase's scope.
   `contract/gen` output is byte-for-byte what `protoc`/`buf` would have
   produced, since it's the same plugins doing the work; only the
   descriptor-compilation front end differs.
-- **`google.api.http` / declarative HTTP-route annotations are not yet
-  supported** — the starter template avoids them so protocompile doesn't
-  need the `googleapis` proto dependencies vendored in. Phase 3 (HTTP
-  adapters) needs a decision here: either add those imports (and resolve
-  them via protocompile's resolver) or derive HTTP routes some other way
-  from the CRUD method names. Tracked as an open question below.
+- **`google.api.http` / declarative HTTP-route annotations weren't
+  supported at the time this section was written** — the starter
+  template still avoids them, so protocompile doesn't need the
+  `googleapis` proto dependencies vendored in by default. Phase 3 (HTTP
+  adapters) settled on deriving routes from the CRUD method names
+  (Decision #14); §20 (Phase 15, done) later added `google.api.http` as
+  an optional per-RPC override on top of that, vendoring just the two
+  files it needs (not the starter template's default).
 
 ## 5. Entities
 
@@ -294,19 +296,19 @@ interface to stay framework-agnostic.
 
 Inside the `sgo` tool itself, frameworks are registered in
 `internal/codegen/httpgen` as a small map from `config.HTTPFramework` to
-a `{serverTemplate, routesTemplate, idPlaceholder}` triple. Adding
+a `{serverTemplate, routesTemplate, colonStyle}` triple. Adding
 framework #4 means adding one map entry and its two template files — no
 change to existing frameworks, the core, or the CLI commands.
 
-**Route derivation (no `google.api.http` support yet — see §12):** since
-descriptor-driven HTTP annotations aren't parsed, routes are derived from
-the RPC name prefix `sgo generate proto`'s starter template already
-commits to: `Create*` → `POST /api/v1/<entity>s`, `Get*` → `GET
-.../{id}`, `List*` → `GET ...`, `Update*` → `PUT .../{id}`, `Delete*` →
-`DELETE .../{id}`; anything else falls back to `POST`, keyed by `{id}` if
-the input message has an `Id` field. This lives in
-`internal/codegen/httpgen.BuildRoutes`, shared by all three frameworks —
-only the Go code emitted for a given route differs per framework.
+**Route derivation:** an RPC with a `(google.api.http)` annotation uses
+it (§20, Phase 15); one without falls back to the RPC name prefix `sgo
+generate proto`'s starter template already commits to: `Create*` →
+`POST /api/v1/<entity>s`, `Get*` → `GET .../{id}`, `List*` → `GET ...`,
+`Update*` → `PUT .../{id}`, `Delete*` → `DELETE .../{id}`; anything else
+falls back to `POST`, keyed by `{id}` if the input message has an `Id`
+field. This lives in `internal/codegen/httpgen.BuildRoutes`, shared by
+all three frameworks — only the Go code emitted for a given route
+differs per framework.
 
 ### 8.2 Persistence: self-managed vs. ORM
 
@@ -739,7 +741,7 @@ project has already made: the pure-Go proto compiler (Decision #5), the
 vendored OpenAPI meta-schemas (§13), the pre-installed browser this dev
 environment already assumes for Playwright verification passes.
 
-## 20. Proto-defined HTTP paths (`google.api.http`) + root path **(planned, Phase 15)**
+## 20. Proto-defined HTTP paths (`google.api.http`) + root path **(done, Phase 15)**
 
 Resolves the open question §12 already flagged ("a possible future
 upgrade if the convention-based routing proves too rigid") rather than
@@ -791,6 +793,23 @@ parameter names come from the annotation itself, not a hardcoded field-
 name check. `sgo generate openapi` (§13) and `sgo list endpoints` (§18)
 need no changes at all to pick this up — both already only consume
 `BuildRoutes`'s output.
+
+**As implemented:** `base_path` prefixes every convention-derived route
+as designed, but only prefixes an annotation-derived one when it's
+explicitly set — `google.api.http` paths are meant to already be
+complete per its own upstream convention, so unconditionally prepending
+the default `/api/v1` would double-prefix and break real annotated
+paths rather than widen what's expressible. v1 also states, rather than
+silently mishandles, a few annotation shapes it doesn't cover yet: a
+`custom` (non-get/post/put/delete/patch) pattern, a wildcard path
+segment, a `{name=sub/pattern}` variable, a dotted field path in a
+variable, and `body:"<field>"` (binding a single nested field instead
+of `body:"*"` or an omitted body) each reject with a clear error naming
+the RPC and what's unsupported. Proven end to end
+(`internal/codegen/httpgen/annotated_e2e_test.go`): a multi-parameter
+annotated path binds every named parameter correctly, and a
+`(sgo.base_path)` override reaches both the annotated and
+convention-derived routes on the same service.
 
 ## 21. Repository-port methods beyond fixed CRUD **(planned, Phase 16)**
 
@@ -954,19 +973,18 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
 
 - ~~**`buf` as a hard prerequisite**~~ — resolved by Decision #5: no
   `buf`/`protoc` prerequisite at all.
-- **`google.api.http` support** — Decision #14 resolved this for the
-  time being (routes come from the CRUD RPC naming convention, not
-  annotations); §20 (Phase 15, planned) now takes up "a possible future
-  upgrade if the convention-based routing proves too rigid" as an
-  optional override, not a replacement — naming-convention routing keeps
-  working for any proto that doesn't opt in.
+- ~~**`google.api.http` support**~~ — resolved: Decision #14 kept the CRUD
+  RPC naming convention as the default; §20 (Phase 15, done) added it as
+  an optional per-RPC override, not a replacement — naming-convention
+  routing keeps working for any proto that doesn't opt in.
 - **HTTP route derivation only understands `id` as the path-parameter
-  field name** (`httpgen.hasIDField` checks for a field whose Go name is
-  exactly `Id`). A message using a different key field name won't get a
-  path parameter today. §20 (Phase 15, planned) resolves this for any
-  route with an explicit `google.api.http` annotation, since its path
-  parameters come from the annotation's own `{name}` bindings rather
-  than a hardcoded field-name check; convention-derived routes keep the
+  field name for convention-derived routes** (`httpgen.hasIDField` checks
+  for a field whose Go name is exactly `Id`). A message using a different
+  key field name won't get a path parameter unless the RPC also carries
+  an explicit `google.api.http` annotation — §20 (Phase 15, done) resolves
+  this for any annotated route, since its path parameters come from the
+  annotation's own `{name}` bindings rather than a hardcoded field-name
+  check; convention-derived routes without an annotation keep the
   `id`-only limitation.
 - **Query-parameter parsing isn't implemented** — `List*` routes always
   call the usecase with a zero-value request (no `page`/`page_size` read

@@ -20,8 +20,8 @@ func Register{{.Entity}}Routes(engine *gin.Engine, svc *app.{{.Entity}}Service) 
 			return
 		}
 {{- end}}
-{{- if .HasID}}
-		req.Id = c.Param("id")
+{{- range .PathParams}}
+		req.{{.GoName}} = c.Param("{{.URLName}}")
 {{- end}}
 {{- if eq .RespKind "delete"}}
 		if err := svc.{{.Name}}(c.Request.Context(), &req); err != nil {

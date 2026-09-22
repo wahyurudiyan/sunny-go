@@ -62,6 +62,14 @@ var file_sgo_options_proto_extTypes = []protoimpl.ExtensionInfo{
 		Tag:           "varint,50002,opt,name=query",
 		Filename:      "sgo/options.proto",
 	},
+	{
+		ExtendedType:  (*descriptorpb.ServiceOptions)(nil),
+		ExtensionType: (*string)(nil),
+		Field:         50001,
+		Name:          "sgo.base_path",
+		Tag:           "bytes,50001,opt,name=base_path",
+		Filename:      "sgo/options.proto",
+	},
 }
 
 // Extension fields to descriptorpb.MessageOptions.
@@ -82,6 +90,12 @@ var (
 	E_Query = &file_sgo_options_proto_extTypes[4]
 )
 
+// Extension fields to descriptorpb.ServiceOptions.
+var (
+	// optional string base_path = 50001;
+	E_BasePath = &file_sgo_options_proto_extTypes[5]
+)
+
 var File_sgo_options_proto protoreflect.FileDescriptor
 
 const file_sgo_options_proto_rawDesc = "" +
@@ -91,11 +105,13 @@ const file_sgo_options_proto_rawDesc = "" +
 	"\fvalue_object\x12\x1f.google.protobuf.MessageOptions\x18҆\x03 \x01(\bR\vvalueObject:D\n" +
 	"\fdomain_event\x12\x1f.google.protobuf.MessageOptions\x18ӆ\x03 \x01(\bR\vdomainEvent::\n" +
 	"\acommand\x12\x1e.google.protobuf.MethodOptions\x18ц\x03 \x01(\bR\acommand:6\n" +
-	"\x05query\x12\x1e.google.protobuf.MethodOptions\x18҆\x03 \x01(\bR\x05queryB/Z-github.com/wahyurudiyan/sunny-go/pkg/sgoprotob\x06proto3"
+	"\x05query\x12\x1e.google.protobuf.MethodOptions\x18҆\x03 \x01(\bR\x05query:>\n" +
+	"\tbase_path\x12\x1f.google.protobuf.ServiceOptions\x18ц\x03 \x01(\tR\bbasePathB/Z-github.com/wahyurudiyan/sunny-go/pkg/sgoprotob\x06proto3"
 
 var file_sgo_options_proto_goTypes = []any{
 	(*descriptorpb.MessageOptions)(nil), // 0: google.protobuf.MessageOptions
 	(*descriptorpb.MethodOptions)(nil),  // 1: google.protobuf.MethodOptions
+	(*descriptorpb.ServiceOptions)(nil), // 2: google.protobuf.ServiceOptions
 }
 var file_sgo_options_proto_depIdxs = []int32{
 	0, // 0: sgo.aggregate_root:extendee -> google.protobuf.MessageOptions
@@ -103,10 +119,11 @@ var file_sgo_options_proto_depIdxs = []int32{
 	0, // 2: sgo.domain_event:extendee -> google.protobuf.MessageOptions
 	1, // 3: sgo.command:extendee -> google.protobuf.MethodOptions
 	1, // 4: sgo.query:extendee -> google.protobuf.MethodOptions
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	0, // [0:5] is the sub-list for extension extendee
+	2, // 5: sgo.base_path:extendee -> google.protobuf.ServiceOptions
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	0, // [0:6] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
 }
 
@@ -122,7 +139,7 @@ func file_sgo_options_proto_init() {
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sgo_options_proto_rawDesc), len(file_sgo_options_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   0,
-			NumExtensions: 5,
+			NumExtensions: 6,
 			NumServices:   0,
 		},
 		GoTypes:           file_sgo_options_proto_goTypes,

@@ -136,7 +136,7 @@ func listEndpoints(name string) error {
 		return nil
 	}
 
-	idPlaceholder, err := httpgen.IDPlaceholder(cfg.HTTPFramework)
+	colonStyle, err := httpgen.ColonStyle(cfg.HTTPFramework)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,10 @@ func listEndpoints(name string) error {
 			return fmt.Errorf("building IR for %s: %w", svc, err)
 		}
 
-		routes := httpgen.BuildRoutes(file, svc)
+		routes, err := httpgen.BuildRoutes(fd, file, svc)
+		if err != nil {
+			return fmt.Errorf("deriving routes for %s: %w", svc, err)
+		}
 		if len(routes) == 0 {
 			continue
 		}
@@ -163,7 +166,7 @@ func listEndpoints(name string) error {
 		printed = true
 		fmt.Printf("%s:\n", svc)
 		for _, r := range routes {
-			fmt.Printf("  %-6s %-30s %s\n", r.Verb, r.FullPath(idPlaceholder), r.Method.Name)
+			fmt.Printf("  %-6s %-30s %s\n", r.Verb, r.FullPath(colonStyle), r.Method.Name)
 		}
 	}
 

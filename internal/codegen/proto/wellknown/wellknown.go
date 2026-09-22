@@ -1,10 +1,10 @@
 // Package wellknown embeds the proto files sgo vendors so a project's
 // own protos can import them without a `protoc`/`buf` binary or network
 // access: sgo's own custom options (sgo/options.proto, ARCHITECTURE.md
-// §17) and the vendored protovalidate schema
-// (buf/validate/validate.proto). google/api/http.proto and
-// google/api/annotations.proto (ARCHITECTURE.md §20) join this same
-// tree once that phase lands.
+// §17), the vendored protovalidate schema (buf/validate/validate.proto),
+// and the vendored `google.api.http` extension definitions
+// (google/api/http.proto, google/api/annotations.proto,
+// ARCHITECTURE.md §20).
 package wellknown
 
 import (
@@ -15,7 +15,7 @@ import (
 	"github.com/bufbuild/protocompile"
 )
 
-//go:embed buf sgo
+//go:embed buf sgo google
 var files embed.FS
 
 // Resolver resolves an import path like "sgo/options.proto" or

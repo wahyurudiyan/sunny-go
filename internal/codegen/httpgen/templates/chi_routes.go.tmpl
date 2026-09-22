@@ -21,8 +21,8 @@ func Register{{.Entity}}Routes(r chi.Router, svc *app.{{.Entity}}Service) {
 			return
 		}
 {{- end}}
-{{- if .HasID}}
-		body.Id = chi.URLParam(req, "id")
+{{- range .PathParams}}
+		body.{{.GoName}} = chi.URLParam(req, "{{.URLName}}")
 {{- end}}
 {{- if eq .RespKind "delete"}}
 		if err := svc.{{.Name}}(req.Context(), &body); err != nil {

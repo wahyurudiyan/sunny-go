@@ -799,7 +799,7 @@ openapi`; `sgo openapi ui` on a project with a generated doc serves a
 real interactive viewer showing that project's actual endpoints,
 verified in a real browser, no internet access required.
 
-## Phase 15 — Proto-defined HTTP paths (`google.api.http`) + root path **(planned)**
+## Phase 15 — Proto-defined HTTP paths (`google.api.http`) + root path **(done)**
 
 The riskiest and most novel piece of this batch — resolves the
 `google.api.http` open question ARCHITECTURE.md §12/Decision #14 already
@@ -811,7 +811,7 @@ RPC with no `google.api.http` option keeps today's naming-convention
 routing (`Create*`→`POST`, etc., §8.1); one with the option uses it
 instead. Every existing generated project keeps working unchanged.
 
-- [ ] **Vendor `google/api/http.proto` + `google/api/annotations.proto`**
+- [x] **Vendor `google/api/http.proto` + `google/api/annotations.proto`**
       (small, Apache-2.0, just the extension/option definitions — not
       the whole `googleapis` tree) so `sgo generate proto`-authored files
       can `import "google/api/annotations.proto";` and the pure-Go
@@ -819,7 +819,7 @@ instead. Every existing generated project keeps working unchanged.
       import from the vendored copy without a `protoc`/`buf` binary or
       network access — preserves the property Decision #5 already
       established, doesn't reopen it.
-- [ ] **`sgo`'s own `base_path` service option** — `google.api.http` has
+- [x] **`sgo`'s own `base_path` service option** — `google.api.http` has
       no concept of a service-level path prefix, only per-method rules,
       so a root path needs sgo's own small option:
       `option (sgo.base_path) = "/v1";` on the service (a proto
@@ -830,8 +830,11 @@ instead. Every existing generated project keeps working unchanged.
       to every route on that service, annotation-derived or
       convention-derived — replacing today's hardcoded `/api/v1` prefix
       (§8.1) with this as the default when unset, so nothing changes for
-      a proto that doesn't opt in.
-- [ ] **`internal/codegen/httpgen.BuildRoutes`** — for each RPC, check
+      a proto that doesn't opt in. (As implemented: an annotation-derived
+      route only gets the prefix when `base_path` is explicitly set,
+      since `google.api.http` paths are meant to already be complete —
+      unconditionally prepending the default would double-prefix them.)
+- [x] **`internal/codegen/httpgen.BuildRoutes`** — for each RPC, check
       for a `google.api.http` option first (method/path from
       `get`/`post`/`put`/`delete`/`patch`, path parameters from `{name}`
       bindings, request body from the `body` field); fall back to
@@ -839,27 +842,38 @@ instead. Every existing generated project keeps working unchanged.
       translate to each framework's own syntax (Gin/Echo `:name`, Chi
       `{name}`) same as the existing `{id}` handling already does — not
       limited to a field literally named `id` any more, resolving the
-      other open question §12 already flagged alongside this one.
-- [ ] `sgo generate openapi` and `sgo list endpoints` (Phase 13) need no
+      other open question §12 already flagged alongside this one. v1
+      states, rather than silently mishandles, what it doesn't cover: a
+      `custom` (non-verb) pattern, a wildcard segment, a
+      `{name=sub/pattern}` variable, a dotted field path, a path
+      parameter bound to a non-scalar field, and `body:"<field>"` each
+      reject with a clear error instead of guessing at a mapping.
+- [x] `sgo generate openapi` and `sgo list endpoints` (Phase 13) need no
       changes at all — both already just consume `BuildRoutes`'s output,
       so proto-defined paths show up in generated OpenAPI docs and
       `sgo list endpoints` for free once `BuildRoutes` itself understands
-      them.
-- [ ] Ginkgo specs: a proto with an explicit `google.api.http` option
+      them. Confirmed: neither needed any code change beyond the
+      mechanical `PathParams`-loop generalization `BuildRoutes`'s own
+      signature change required.
+- [x] Ginkgo specs: a proto with an explicit `google.api.http` option
       generates the annotated route, not the convention-derived one; a
       proto without one is byte-identical to today's output (regression
       guard that the override really is optional); path-parameter
-      translation per framework; the `base_path` override; plus a CLI
-      e2e spec building a real project from an annotated proto and
-      hitting the actual generated route over a real socket, same
-      standard the HTTP CRUD e2e suite (Phase 3/4) already holds
-      generated adapters to.
+      translation per framework; the `base_path` override; plus a real
+      end-to-end spec (`httpgen/annotated_e2e_test.go`) building a real
+      project from an annotated proto, binding two independent path
+      parameters on one route, and hitting the actual generated route
+      over a real socket, same standard the HTTP CRUD e2e suite (Phase
+      3/4) already holds generated adapters to. Ten focused specs
+      (`httpgen/route_test.go`) cover every v1 constraint's rejection
+      path individually.
 
 **Exit criteria:** an RPC with a `google.api.http` option gets exactly
 that route; one without keeps today's convention-derived route,
 unchanged; a service with `(sgo.base_path)` set gets that prefix instead
 of the default `/api/v1`; every existing generated-project e2e spec
-still passes with no proto changes.
+still passes with no proto changes. All met — full repo suite green,
+`gofmt`/`go vet` clean.
 
 ## Phase 16 — Repository-port methods beyond fixed CRUD **(planned)**
 

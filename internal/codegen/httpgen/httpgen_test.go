@@ -7,6 +7,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"google.golang.org/protobuf/reflect/protoreflect"
+
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/core"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/httpgen"
 	sgoproto "github.com/wahyurudiyan/sunny-go/internal/codegen/proto"
@@ -16,6 +18,7 @@ import (
 var _ = Describe("Generate", func() {
 	var (
 		root, protoDir, destDir string
+		fd                      protoreflect.FileDescriptor
 		file                    *sgoproto.File
 		p                       core.Paths
 	)
@@ -27,7 +30,7 @@ var _ = Describe("Generate", func() {
 		DeferCleanup(func() { Expect(os.RemoveAll(root)).To(Succeed()) })
 
 		protoDir = filepath.Join(root, "contract", "pb")
-		file = userFile(protoDir)
+		fd, file = userFile(protoDir)
 		p = core.Paths{Module: "demo", Entity: "user"}
 	})
 
@@ -35,7 +38,7 @@ var _ = Describe("Generate", func() {
 		BeforeEach(func() {
 			destDir = filepath.Join(root, "internal", "infrastructure", "transport", "http", "gin")
 			Expect(httpgen.GenerateServer(config.HTTPFrameworkGin, destDir)).To(Succeed())
-			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkGin, file, p, destDir)).To(Succeed())
+			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkGin, fd, file, p, destDir)).To(Succeed())
 		})
 
 		It("writes a server wrapping gin.Engine", func() {
@@ -60,7 +63,7 @@ var _ = Describe("Generate", func() {
 		BeforeEach(func() {
 			destDir = filepath.Join(root, "internal", "infrastructure", "transport", "http", "echo")
 			Expect(httpgen.GenerateServer(config.HTTPFrameworkEcho, destDir)).To(Succeed())
-			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkEcho, file, p, destDir)).To(Succeed())
+			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkEcho, fd, file, p, destDir)).To(Succeed())
 		})
 
 		It("writes a server wrapping echo.Echo", func() {
@@ -81,7 +84,7 @@ var _ = Describe("Generate", func() {
 		BeforeEach(func() {
 			destDir = filepath.Join(root, "internal", "infrastructure", "transport", "http", "chi")
 			Expect(httpgen.GenerateServer(config.HTTPFrameworkChi, destDir)).To(Succeed())
-			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkChi, file, p, destDir)).To(Succeed())
+			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkChi, fd, file, p, destDir)).To(Succeed())
 		})
 
 		It("writes a server wrapping chi.Router", func() {
@@ -105,23 +108,23 @@ var _ = Describe("Generate", func() {
 	})
 })
 
-var _ = Describe("IDPlaceholder", func() {
+var _ = Describe("ColonStyle", func() {
 	It("matches each framework's own routes template syntax", func() {
-		gin, err := httpgen.IDPlaceholder(config.HTTPFrameworkGin)
+		gin, err := httpgen.ColonStyle(config.HTTPFrameworkGin)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(gin).To(Equal(":id"))
+		Expect(gin).To(BeTrue())
 
-		echo, err := httpgen.IDPlaceholder(config.HTTPFrameworkEcho)
+		echo, err := httpgen.ColonStyle(config.HTTPFrameworkEcho)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(echo).To(Equal(":id"))
+		Expect(echo).To(BeTrue())
 
-		chi, err := httpgen.IDPlaceholder(config.HTTPFrameworkChi)
+		chi, err := httpgen.ColonStyle(config.HTTPFrameworkChi)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(chi).To(Equal("{id}"))
+		Expect(chi).To(BeFalse())
 	})
 
 	It("rejects an unsupported framework", func() {
-		_, err := httpgen.IDPlaceholder("fiber")
+		_, err := httpgen.ColonStyle("fiber")
 		Expect(err).To(MatchError(ContainSubstring("unsupported HTTP framework")))
 	})
 })

@@ -19,8 +19,8 @@ func Register{{.Entity}}Routes(e *echo.Echo, svc *app.{{.Entity}}Service) {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 {{- end}}
-{{- if .HasID}}
-		req.Id = c.Param("id")
+{{- range .PathParams}}
+		req.{{.GoName}} = c.Param("{{.URLName}}")
 {{- end}}
 {{- if eq .RespKind "delete"}}
 		if err := svc.{{.Name}}(c.Request().Context(), &req); err != nil {

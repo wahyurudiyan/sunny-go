@@ -129,4 +129,70 @@ message Order {
 			Expect(proto.FieldConstraints(md.Fields().ByName("unconstrained"))).To(BeNil())
 		})
 	})
+
+	Context("vendored google.api.http (google/api/annotations.proto) and sgo.base_path", func() {
+		It("compiles a proto importing google/api/annotations.proto and reports the real HttpRule", func() {
+			content := `syntax = "proto3";
+
+package order.v1;
+
+import "google/api/annotations.proto";
+import "sgo/options.proto";
+
+option go_package = "demo/contract/gen/order";
+
+service OrderService {
+  option (sgo.base_path) = "/v2";
+
+  rpc GetOrder(GetOrderRequest) returns (Order) {
+    option (google.api.http) = {
+      get: "/orders/{order_id}"
+    };
+  }
+  rpc PlainRPC(GetOrderRequest) returns (Order);
+}
+
+message GetOrderRequest {
+  string order_id = 1;
+}
+
+message Order {
+  string id = 1;
+}
+`
+			fd := compile(content)
+			svc := fd.Services().Get(0)
+
+			rule := proto.HTTPRule(svc.Methods().ByName("GetOrder"))
+			Expect(rule).NotTo(BeNil())
+			Expect(rule.GetGet()).To(Equal("/orders/{order_id}"))
+
+			Expect(proto.HTTPRule(svc.Methods().ByName("PlainRPC"))).To(BeNil())
+
+			Expect(proto.BasePath(svc)).To(Equal("/v2"))
+		})
+
+		It("reports an empty base_path when the service doesn't set one", func() {
+			content := `syntax = "proto3";
+
+package order.v1;
+
+option go_package = "demo/contract/gen/order";
+
+service OrderService {
+  rpc GetOrder(GetOrderRequest) returns (Order);
+}
+
+message GetOrderRequest {
+  string order_id = 1;
+}
+
+message Order {
+  string id = 1;
+}
+`
+			fd := compile(content)
+			Expect(proto.BasePath(fd.Services().Get(0))).To(Equal(""))
+		})
+	})
 })

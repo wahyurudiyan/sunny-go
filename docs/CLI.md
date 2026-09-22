@@ -85,10 +85,12 @@ Compiles `contract/pb/user.proto` (via a pure-Go compiler — no `buf`/
   the gRPC adapter's own request-side mapping
 - HTTP route registration for the project's `sgo.yaml`-selected framework
   (`internal/infrastructure/transport/http/<framework>/user_routes_gen.go`
-  + `server_gen.go`), with routes derived from the RPC naming convention
-  (`Create*`→`POST`, `Get*`→`GET .../{id}`, `List*`→`GET`,
-  `Update*`→`PUT .../{id}`, `Delete*`→`DELETE .../{id}` — no
-  `google.api.http` support yet, see ARCHITECTURE §8.1/§12)
+  + `server_gen.go`). An RPC carrying a `(google.api.http)` option uses
+  its declared method/path/body; one without falls back to the RPC
+  naming convention (`Create*`→`POST`, `Get*`→`GET .../{id}`,
+  `List*`→`GET`, `Update*`→`PUT .../{id}`, `Delete*`→`DELETE .../{id}` —
+  see ARCHITECTURE §8.1/§20). `option (sgo.base_path) = "/v1";` on the
+  service overrides the default `/api/v1` prefix for every route on it.
 - A gRPC server adapter
   (`internal/infrastructure/transport/grpc/user_grpc_server_gen.go`)
   implementing the real protoc-gen-go-grpc server interface

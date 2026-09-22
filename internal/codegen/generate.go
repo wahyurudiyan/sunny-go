@@ -93,7 +93,7 @@ func GenerateCode(projectDir, name string, cfg *config.Config) error {
 	if err := httpgen.GenerateServer(cfg.HTTPFramework, httpDir); err != nil {
 		return err
 	}
-	if err := httpgen.GenerateRoutes(cfg.HTTPFramework, file, p, httpDir); err != nil {
+	if err := httpgen.GenerateRoutes(cfg.HTTPFramework, fd, file, p, httpDir); err != nil {
 		return err
 	}
 

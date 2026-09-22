@@ -3,6 +3,7 @@ package proto
 import (
 	validatepb "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 
+	"google.golang.org/genproto/googleapis/api/annotations"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
@@ -30,6 +31,10 @@ func methodOptions(mtd protoreflect.MethodDescriptor) *descriptorpb.MethodOption
 
 func fieldOptions(fd protoreflect.FieldDescriptor) *descriptorpb.FieldOptions {
 	return roundTrip(fd.Options(), &descriptorpb.FieldOptions{})
+}
+
+func serviceOptions(sd protoreflect.ServiceDescriptor) *descriptorpb.ServiceOptions {
+	return roundTrip(sd.Options(), &descriptorpb.ServiceOptions{})
 }
 
 func roundTrip[T proto.Message](dyn protoreflect.ProtoMessage, static T) T {
@@ -84,4 +89,27 @@ func FieldConstraints(fd protoreflect.FieldDescriptor) *validatepb.FieldRules {
 	}
 	rules, _ := proto.GetExtension(opts, validatepb.E_Field).(*validatepb.FieldRules)
 	return rules
+}
+
+// HTTPRule returns mtd's `(google.api.http) = {...}` annotation, or nil
+// if it has none — in which case httpgen.BuildRoutes falls back to its
+// existing naming-convention route derivation (ARCHITECTURE.md §20).
+// Read through the real, official generated Go bindings
+// (google.golang.org/genproto/googleapis/api/annotations), the same
+// "read a real extension through its real generated type" approach
+// FieldConstraints already uses for buf.validate.field.
+func HTTPRule(mtd protoreflect.MethodDescriptor) *annotations.HttpRule {
+	opts := methodOptions(mtd)
+	if !proto.HasExtension(opts, annotations.E_Http) {
+		return nil
+	}
+	rule, _ := proto.GetExtension(opts, annotations.E_Http).(*annotations.HttpRule)
+	return rule
+}
+
+// BasePath returns sd's `option (sgo.base_path) = "...";` override, or
+// "" if it has none — in which case the caller uses the default
+// "/api/v1" prefix (ARCHITECTURE.md §8.1/§20).
+func BasePath(sd protoreflect.ServiceDescriptor) string {
+	return proto.GetExtension(serviceOptions(sd), sgopb.E_BasePath).(string)
 }

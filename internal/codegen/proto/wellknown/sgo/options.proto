@@ -57,3 +57,12 @@ extend google.protobuf.MethodOptions {
   // it.
   bool query = 50002;
 }
+
+extend google.protobuf.ServiceOptions {
+  // base_path overrides the default "/api/v1" prefix (ARCHITECTURE.md
+  // §8.1) applied to every route this service derives, both
+  // convention-derived and google.api.http-annotation-derived alike
+  // (ARCHITECTURE.md §20). Unset means the default is used, so a
+  // service that doesn't opt in sees no change.
+  string base_path = 50001;
+}

@@ -22,6 +22,10 @@ import "buf/validate/validate.proto";
 
 option go_package = "demo/contract/gen/order";
 
+service OrderService {
+  rpc CreateOrder(CreateOrderRequest) returns (Order);
+}
+
 message Order {
   option (sgo.aggregate_root) = true;
   string id = 1;
@@ -34,13 +38,17 @@ message Money {
   int64 amount = 1 [(buf.validate.field).int64.gt = 0];
   string currency = 2;
 }
+
+message CreateOrderRequest {
+  string email = 1 [(buf.validate.field).string.email = true];
+}
 `
 
 var _ = Describe("GenerateInfraMapper", func() {
 	var (
-		root, protoDir, domainDir, mapperDir, eventDir, wireDir string
-		file                                                    *sgoproto.File
-		p                                                       core.Paths
+		root, protoDir, domainDir, appDir, mapperDir, eventDir, wireDir string
+		file                                                            *sgoproto.File
+		p                                                               core.Paths
 	)
 
 	BeforeEach(func() {
@@ -60,18 +68,20 @@ var _ = Describe("GenerateInfraMapper", func() {
 
 		p = core.Paths{Module: "demo", Entity: "order"}
 		domainDir = filepath.Join(root, "internal", "domain", "order")
+		appDir = filepath.Join(root, "internal", "application", "order")
 		mapperDir = filepath.Join(root, "internal", "infrastructure", "transport")
 		eventDir = filepath.Join(root, "internal", "domain", "event")
 		wireDir = filepath.Join(root, "contract", "gen", "order")
 
 		Expect(core.GenerateEventKernel(eventDir)).To(Succeed())
 		Expect(core.GenerateAggregate(file, fd, p, domainDir)).To(Succeed())
+		Expect(core.GenerateCommandsAndQueries(file, fd, p, appDir)).To(Succeed())
 		Expect(wiregen.Generate(fd, wireDir)).To(Succeed())
 		Expect(core.GenerateInfraMapper(file, p, mapperDir)).To(Succeed())
 	})
 
 	It("generates ToDomain/FromDomain for the aggregate and its value object, excluding nothing else", func() {
-		src, err := os.ReadFile(filepath.Join(mapperDir, "mapper_gen.go"))
+		src, err := os.ReadFile(filepath.Join(mapperDir, "order_mapper_gen.go"))
 		Expect(err).NotTo(HaveOccurred())
 		s := string(src)
 
@@ -79,6 +89,15 @@ var _ = Describe("GenerateInfraMapper", func() {
 		Expect(s).To(ContainSubstring("func OrderFromDomain(d *domain.Order) *wire.Order"))
 		Expect(s).To(ContainSubstring("func MoneyToDomain(w *wire.Money) (*domain.Money, error)"))
 		Expect(s).To(ContainSubstring("validator.Validate(w)"))
+	})
+
+	It("generates a ToApp conversion for each Request DTO, for the gRPC adapter's own request-side mapping", func() {
+		src, err := os.ReadFile(filepath.Join(mapperDir, "order_mapper_gen.go"))
+		Expect(err).NotTo(HaveOccurred())
+		s := string(src)
+
+		Expect(s).To(ContainSubstring("func CreateOrderRequestToApp(w *wire.CreateOrderRequest) (*app.CreateOrderRequest, error)"))
+		Expect(s).NotTo(ContainSubstring("OrderToApp"), "the aggregate itself isn't a DTO and shouldn't get a ToApp conversion")
 	})
 
 	It("compiles against the real protoc-gen-go output and rejects/accepts data per the proto's real constraints", func() {
@@ -116,6 +135,7 @@ var _ = Describe("GenerateInfraMapper", func() {
 
 		copyDir(eventDir, "internal/domain/event")
 		copyDir(domainDir, "internal/domain/order")
+		copyDir(appDir, "internal/application/order")
 		copyDir(mapperDir, "internal/infrastructure/transport")
 		copyDir(wireDir, "contract/gen/order")
 
@@ -150,6 +170,21 @@ func main() {
 		panic("round-trip mismatch")
 	}
 	fmt.Println("accepted good order, round-tripped ok")
+
+	_, err = mapper.CreateOrderRequestToApp(&wire.CreateOrderRequest{Email: "not-an-email"})
+	if err == nil {
+		panic("expected validation error for bad CreateOrderRequest")
+	}
+	fmt.Println("rejected bad CreateOrderRequest:", err)
+
+	appReq, err := mapper.CreateOrderRequestToApp(&wire.CreateOrderRequest{Email: "user@example.com"})
+	if err != nil {
+		panic("expected no error for good CreateOrderRequest: " + err.Error())
+	}
+	if appReq.Email != "user@example.com" {
+		panic("CreateOrderRequestToApp field mismatch")
+	}
+	fmt.Println("accepted good CreateOrderRequest")
 }
 `
 		Expect(os.WriteFile(filepath.Join(modDir, "main.go"), []byte(mainSrc), 0644)).To(Succeed())
@@ -165,5 +200,7 @@ func main() {
 		Expect(err).NotTo(HaveOccurred(), string(out))
 		Expect(string(out)).To(ContainSubstring("rejected bad order"))
 		Expect(string(out)).To(ContainSubstring("accepted good order, round-tripped ok"))
+		Expect(string(out)).To(ContainSubstring("rejected bad CreateOrderRequest"))
+		Expect(string(out)).To(ContainSubstring("accepted good CreateOrderRequest"))
 	})
 })

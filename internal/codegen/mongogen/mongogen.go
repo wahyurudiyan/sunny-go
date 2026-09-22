@@ -21,9 +21,10 @@ import (
 var templatesFS embed.FS
 
 // ImportPath is where the Mongo adapter lives, e.g.
-// "<module>/internal/adapter/out/persistence/mongo".
+// "<module>/internal/infrastructure/persistence/mongo"
+// (ARCHITECTURE.md §17).
 func ImportPath(module string) string {
-	return path.Join(module, "internal/adapter/out/persistence/mongo")
+	return path.Join(module, "internal/infrastructure/persistence/mongo")
 }
 
 type column struct {
@@ -59,7 +60,7 @@ func Generate(f *sgoproto.File, p core.Paths, destDir string) error {
 		Entity:           entityTitle(p.Entity),
 		EntityLower:      p.Entity,
 		DomainPkg:        p.Entity,
-		DomainImportPath: p.DomainImportPath(),
+		DomainImportPath: p.AggregateDomainImportPath(),
 		Collection:       strings.ToLower(p.Entity) + "s",
 		Columns:          cols,
 	}

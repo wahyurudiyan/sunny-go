@@ -143,6 +143,15 @@ func (p Paths) ApplicationPortsImportPath() string {
 	return path.Join(p.Module, "internal/application/ports")
 }
 
+// TransportMapperImportPath is the shared internal/infrastructure/
+// transport package GenerateInfraMapper writes each entity's
+// <entity>_mapper_gen.go into (ARCHITECTURE.md §17) — one package for
+// every entity's wire conversions, like the pre-Phase-12
+// MapperImportPath it replaces.
+func (p Paths) TransportMapperImportPath() string {
+	return path.Join(p.Module, "internal/infrastructure/transport")
+}
+
 // entityTitle returns the exported (PascalCase-first-letter) form of an
 // entity name, e.g. "user" -> "User". Proto message/service names in our
 // own scaffold already follow this convention; this only matters when

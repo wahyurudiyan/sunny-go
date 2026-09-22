@@ -66,70 +66,12 @@ func buildRoutesData(f *sgoproto.File, p core.Paths, idPlaceholder string) route
 			Input:     r.Method.Input,
 			Output:    r.Method.Output,
 		}
-		tr.RespKind, tr.RespField, tr.RespTotalField = classifyResponse(f, aggregateName, r.Method.Name, r.Method.Output)
+		shape := core.ClassifyResponse(f, aggregateName, r.Method.Name, r.Method.Output)
+		tr.RespKind, tr.RespField, tr.RespTotalField = shape.Kind, shape.Field, shape.TotalField
 		data.Routes = append(data.Routes, tr)
 	}
 
 	return data
-}
-
-// classifyResponse derives how a route's handler should JSON-wrap its
-// application service call's result. kind follows the exact same
-// RPC-name-prefix convention core.returnType (application.go) uses to
-// decide what the service method itself returns, so the two always
-// agree: "list" for List*, "delete" (no aggregate at all) for Delete*,
-// "single" otherwise. field/totalField are the outputMsg's own field
-// names (falling back to a lowercase-entity-name convention if outputMsg
-// doesn't declare a matching field — reachable only via a hand-edited
-// proto that doesn't follow `sgo generate proto`'s starter shape).
-func classifyResponse(f *sgoproto.File, aggregateName, rpcName, outputMsg string) (kind, field, totalField string) {
-	switch {
-	case strings.HasPrefix(rpcName, "List"):
-		kind = "list"
-	case strings.HasPrefix(rpcName, "Delete"):
-		return "delete", "", ""
-	default:
-		kind = "single"
-	}
-
-	wantRepeated := kind == "list"
-	field = findAggregateField(f, outputMsg, aggregateName, wantRepeated)
-	if field == "" {
-		field = strings.ToLower(aggregateName)
-		if wantRepeated {
-			field += "s"
-		}
-	}
-	if kind == "list" {
-		totalField = findTotalField(f, outputMsg)
-	}
-	return kind, field, totalField
-}
-
-func findAggregateField(f *sgoproto.File, outputMsg, aggregateName string, repeated bool) string {
-	msg := f.FindMessage(outputMsg)
-	if msg == nil {
-		return ""
-	}
-	for _, fld := range msg.Fields {
-		if fld.IsMessage() && fld.MessageType == aggregateName && fld.Repeated == repeated {
-			return fld.Name
-		}
-	}
-	return ""
-}
-
-func findTotalField(f *sgoproto.File, outputMsg string) string {
-	msg := f.FindMessage(outputMsg)
-	if msg == nil {
-		return ""
-	}
-	for _, fld := range msg.Fields {
-		if !fld.IsMessage() && fld.GoName == "Total" {
-			return fld.Name
-		}
-	}
-	return ""
 }
 
 func titleVerb(verb string) string {

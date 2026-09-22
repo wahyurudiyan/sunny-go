@@ -70,9 +70,10 @@ func Supports(engine config.PersistenceEngine) bool {
 }
 
 // ImportPath is where engine's persistence adapter lives, e.g.
-// "<module>/internal/adapter/out/persistence/postgres".
+// "<module>/internal/infrastructure/persistence/postgres"
+// (ARCHITECTURE.md §17).
 func ImportPath(module string, engine config.PersistenceEngine) string {
-	return path.Join(module, "internal/adapter/out/persistence", string(engine))
+	return path.Join(module, "internal/infrastructure/persistence", string(engine))
 }
 
 // column is one entity field persisted as a SQL column (or a GORM

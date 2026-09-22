@@ -15,6 +15,9 @@ import (
 
 	wire "{{.WireImportPath}}"
 	domain "{{.DomainImportPath}}"
+{{- if .RequestDTOs}}
+	app "{{.ApplicationImportPath}}"
+{{- end}}
 )
 
 var validator = mustValidator()
@@ -83,5 +86,28 @@ func {{.Name}}FromDomain(d *domain.{{.Name}}) *wire.{{.Name}} {
 {{- end}}
 {{- end}}
 	return out
+}
+{{end}}
+{{range .RequestDTOs}}
+// {{.Name}}ToApp converts the wire request into its application-layer
+// Command/Query counterpart, for the gRPC adapter (the HTTP adapter
+// binds JSON directly into app.{{.Name}}, no wire type involved). Only
+// scalar fields are copied — the same v1 limitation
+// GenerateCommandsAndQueries documents for a message-typed request
+// field.
+func {{.Name}}ToApp(w *wire.{{.Name}}) (*app.{{.Name}}, error) {
+	if w == nil {
+		return nil, nil
+	}
+	if err := validator.Validate(w); err != nil {
+		return nil, err
+	}
+	out := &app.{{.Name}}{}
+{{- range .Fields}}
+{{- if not .IsMessage}}
+	out.{{.GoName}} = w.Get{{.GoName}}()
+{{- end}}
+{{- end}}
+	return out, nil
 }
 {{end}}

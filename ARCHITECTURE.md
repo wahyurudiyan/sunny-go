@@ -571,6 +571,110 @@ checked independently with Python's `openapi-spec-validator` — a tool
 that never touches sgo's own vendored schemas or validation code —
 confirming both agree the output is valid.
 
+## 14. Loading indicators **(planned, Phase 9)**
+
+`internal/progress` wraps a blocking call with a terminal spinner:
+`\r<frame> <message>` on a ticker in its own goroutine, cleared (not
+left dangling mid-line) when the call returns. No new dependency —
+`charmbracelet/huh` already pulls in `bubbletea`/`bubbles` as indirect
+ones, but a full TUI `Program` loop is a heavier fit for "show a spinner
+around one blocking function" than the ~40 lines a hand-rolled one
+needs.
+
+TTY-aware the same way `sgo init` already decides wizard-vs-flags
+(`internal/commands/init.go`'s `isatty.IsTerminal` check, §10): animates
+only when stdout is a real terminal, otherwise prints one `<verb>…`
+line before the call and `done`/an error after — piped output (what
+`runSgo` in the CLI e2e suite already captures, and any script or CI
+log) stays readable, never full of `\r` control characters.
+
+Wired into `sgo init`, `sgo generate proto`, `sgo generate code` (one
+spinner per pipeline stage — compiling the proto, generating the
+domain, generating the HTTP adapter, and so on — not one spinner for
+the whole command, so a slow individual stage is visible rather than
+hidden behind a single opaque "Generating…"), and `sgo generate
+openapi`.
+
+## 15. `sgo run` and the `--debug` config dashboard **(planned, Phase 10)**
+
+`sgo run [--debug] [--debug-port 4748]` runs a generated project's
+service the way `go run` would, with configuration loaded from `.env`
+first. `--debug` additionally serves a localhost dashboard for viewing
+and editing that configuration while the service runs. Three decisions
+locked in via `AskUserQuestion` before any code, same process as
+Phase 8:
+
+- **v1 concretely implements exactly one config source: `.env`.**
+  "We need .env or KMS/HSM or similar" names a real, growing set of
+  sources sgo can't credibly build and verify all of in one phase
+  (each needs its own SDK dependency and real credentials to test
+  against) — so instead of guessing which one matters most, or building
+  several shallowly, this phase defines the interface every source will
+  implement and ships the one source needing zero new dependencies and
+  no external account to verify. The same shape already used for
+  persistence/cache/search engines (§8.2/§8.3): one interface, adapters
+  added over time, never a redesign to add the next one.
+- **"Fetch configuration from repo" means a separate, remote config
+  repository** (an org's central config repo, say), not a file already
+  in the project being run — decided now so the eventual adapter's
+  contract is unambiguous later, even though it isn't built in this
+  phase.
+- **The dashboard is fully read/write, including write-back to
+  whatever source a value came from** — not a read-only viewer. Only
+  `.env` write-back is real in v1 (the only real source), but the
+  dashboard and the `Source` interface are designed for it from the
+  start so a future KMS/repo adapter's `Write` just works once it
+  exists, rather than needing the dashboard rebuilt to support editing.
+
+**`internal/run/envsource`** — the `Source` interface:
+
+```go
+type Value struct {
+    Key, Value, Source string // Source: "env" | "dotenv" | (later) "repo" | "kms" | ...
+    Secret bool                // hint: mask in the dashboard by default
+}
+
+type Source interface {
+    Name() string
+    Fetch(ctx context.Context) ([]Value, error)
+    // Write persists key's new value back to this source. A future
+    // read-only source (some KMS setups only grant read access) returns
+    // a clear error here — never a silent no-op.
+    Write(ctx context.Context, key, value string) error
+}
+```
+
+`DotEnvSource` is the one real implementation: parses and rewrites
+`.env`, preserving line order. Merge precedence when `sgo run` starts:
+real OS environment variables win over `.env` values — the convention
+most `.env` tooling already follows, so a real prod/CI environment
+variable already set is never silently shadowed by a leftover local
+`.env` file.
+
+**Process supervisor** (`internal/run`): owns the child `go run
+./cmd/<name>` process (found by locating the project's one `cmd/<name>/`
+directory — there's only ever one, per §3). In `--debug` mode, a
+dashboard-driven config write kills and respawns the child with the
+new merged environment. Scoped deliberately narrow: restarts only on a
+config change the dashboard made, not a general file-watching
+auto-reload tool (`air`/`nodemon`-style) — nobody asked for that, and
+conflating "restart because config changed" with "restart because
+source changed" would be two different features sharing one supervisor
+for no reason yet.
+
+**The dashboard** (new package, alongside `internal/webui` in spirit —
+`127.0.0.1`-only, no auth, same stance as §11): lists every merged
+key, its source, and whether that source is writable; editing a
+writable value calls `Source.Write` then triggers a supervised restart.
+Live updates via Server-Sent Events (stdlib `net/http`, no new
+dependency) rather than polling or a WebSocket library — simplest
+mechanism that's still genuinely push-based for a single-viewer debug
+tool. **Secret values are masked by default**, a reveal toggle per
+value rather than shown outright — a default chosen rather than asked
+about directly: a debug dashboard people run during normal day-to-day
+development showing raw secrets in a browser tab by default is a real
+shoulder-surfing/screen-share risk.
+
 ## 16. Wizard TUI polish **(planned, Phase 11)**
 
 `internal/wizard`'s `huh`-based form renders each `Confirm` field's

@@ -11,6 +11,7 @@ import (
 
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/project"
 	"github.com/wahyurudiyan/sunny-go/internal/config"
+	"github.com/wahyurudiyan/sunny-go/internal/progress"
 	"github.com/wahyurudiyan/sunny-go/internal/wizard"
 )
 
@@ -54,7 +55,10 @@ Examples:
 		}
 
 		destDir := filepath.Join(".", opts.Name)
-		if err := project.Scaffold(destDir, *opts); err != nil {
+		err = progress.Run("Scaffolding "+opts.Name, func() error {
+			return project.Scaffold(destDir, *opts)
+		})
+		if err != nil {
 			fmt.Printf("❌ Failed to scaffold project: %v\n", err)
 			os.Exit(1)
 		}

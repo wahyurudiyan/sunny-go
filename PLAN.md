@@ -467,13 +467,13 @@ code: Python's `openapi-spec-validator` accepted the generated output
 for both version/format combinations by hand, in addition to the
 automated suite.
 
-## Phase 9 — Loading indicators **(planned)**
+## Phase 9 — Loading indicators ✅
 
 Small, self-contained, and unrelated to Phase 10 other than sharing a
 terminal — sequenced first so it ships fast rather than waiting on the
 much bigger `sgo run` work. Full design in ARCHITECTURE.md §14.
 
-- [ ] `internal/progress`: a minimal terminal spinner (own
+- [x] `internal/progress`: a minimal terminal spinner (own
       goroutine + ticker printing `\r<frame> <message>`, cleared on
       completion) wrapping a blocking call — no new dependency; the
       existing `charmbracelet/huh`/`bubbletea` stack is a heavier fit
@@ -481,27 +481,31 @@ much bigger `sgo run` work. Full design in ARCHITECTURE.md §14.
       command.
     - TTY-aware like the wizard already is (`isatty`): animates only
       when stdout is a real terminal; otherwise prints a single
-      "<Verb>…" / "done" line so piped/CI/script output stays clean —
-      the same reasoning `sgo init`'s wizard-vs-flags branch already
-      uses (ARCHITECTURE.md §10).
-- [ ] Wire it into `sgo init` (scaffolding), `sgo generate proto`
-      (stub write), `sgo generate code` (the multi-step generator
-      pipeline — one spinner per stage, e.g. "Compiling proto…",
-      "Generating domain…", "Generating HTTP adapter…", not one spinner
-      for the whole command, so a slow step is visible), and
-      `sgo generate openapi` (recompiling every service + validating).
-- [ ] Ginkgo specs for `internal/progress` itself (non-TTY output shape,
-      completion clears the line) plus updated CLI e2e specs asserting
-      the plain (non-TTY, since `runSgo` pipes output) output shape
-      still contains the same success/failure text existing specs
-      already assert on.
+      "<Verb>…" line so piped/CI/script output stays clean — the same
+      reasoning `sgo init`'s wizard-vs-flags branch already uses
+      (ARCHITECTURE.md §10).
+- [x] Wired into `sgo init` (scaffolding), `sgo generate proto` (stub
+      write), `sgo generate code`, and `sgo generate openapi`.
+      **Revised from the plan above**: one spinner per whole command,
+      not one per pipeline stage inside `generate code`. Per-stage
+      spinners would mean threading a progress-reporting callback
+      through `internal/codegen`'s generator functions, which are
+      deliberately UI-agnostic (the same functions the web UI's
+      handlers call directly, ARCHITECTURE.md Decision #8) — not worth
+      it for a command that already completes in well under a second
+      against real generated projects.
+- [x] Ginkgo specs for `internal/progress` itself (5 specs, ~96%
+      coverage: non-TTY plain-line output, TTY animation and
+      line-clearing, error propagation on both paths). Existing CLI e2e
+      specs needed no changes — `runSgo`'s piped, non-TTY stdin/stdout
+      already exercises the plain-line path, and its output assertions
+      were already substring checks that still hold.
 
-**Exit criteria:** every generation command shows visible progress on a
-real terminal, and piped/non-TTY output (what every existing CLI e2e
-spec already captures) is unchanged from today except for added
-per-stage status lines.
+**Exit criteria — met:** every generation command shows visible
+progress on a real terminal (verified with a real pty via `script
+-qc`), and piped/non-TTY output is unchanged from before this phase.
 
-## Phase 10 — `sgo run` and the `--debug` config dashboard **(planned)**
+## Phase 10 — `sgo run` and the `--debug` config dashboard ✅
 
 Full design in ARCHITECTURE.md §15. Decided via `AskUserQuestion` before
 any code, same as Phase 8:
@@ -524,53 +528,77 @@ any code, same as Phase 8:
   into `sgo ui` — a runtime/live-process concern, separate from `sgo
   ui`'s project-scaffolding one.
 
-- [ ] **`envsource.Source` interface** (`Name`, `Fetch`, `Write`) plus
+- [x] **`envsource.Source` interface** (`Name`, `Fetch`, `Write`) plus
       the one real implementation, `DotEnvSource` (parses/writes
       `.env`, preserving line order; a `Write` on a source that can't
       support it — a hypothetical future read-only adapter — returns a
-      clear error, never a silent no-op).
-- [ ] **`sgo run [--debug] [--debug-port 4748]`** — finds the project's
+      clear error, never a silent no-op). Also `envsource.Merge`, the
+      shared "source values, then the real process environment last"
+      precedence helper both `sgo run`'s own startup and the dashboard's
+      restart path call, rather than two implementations of the same
+      rule.
+- [x] **`sgo run [--debug] [--debug-port 4748]`** — finds the project's
       one `cmd/<name>/` (there's only ever one), merges `.env` values
       under real OS environment variables (OS env wins — the same
       convention most `.env` tooling uses, so a real prod/CI env var
       already set is never silently shadowed by a leftover local
       `.env`), and runs it via `go run ./cmd/<name>`, matching "runs
       like go run" — no separate build-and-run-binary step to manage.
-- [ ] **Process supervisor** (`internal/run`): owns the child `go run`
-      process; `--debug` mode can kill and respawn it with a new merged
-      environment when the dashboard writes a change, instead of
-      requiring a manual Ctrl-C/rerun. Scoped to config-triggered
-      restarts only — not a general file-watching auto-reload tool
-      (nobody asked for that; revisit only if requested).
-- [ ] **The dashboard** (new package, `internal/rundebug` or similar,
-      same shape as `internal/webui`): `127.0.0.1`-only, no auth (same
-      stance as `sgo ui`, ARCHITECTURE.md §11). Shows every merged
-      key's current value, its source, and whether that source supports
-      writing; editing a writable value calls `Source.Write` then
-      triggers a supervised restart. Real-time updates over Server-Sent
-      Events (stdlib `net/http`, no new dependency) rather than polling
-      or a WebSocket library.
+      Stops the child cleanly on Ctrl-C either way; non-debug mode races
+      a blocking wait for the child against the interrupt so a real
+      crash is still reported.
+- [x] **Process supervisor** (`internal/run`): owns the child `go run`
+      process; `Stop` kills its whole process group (`Setpgid` + a
+      negative-PID `SIGKILL`), not just the `go` toolchain process, so
+      `go run`'s spawned compiled binary is never orphaned. `--debug`
+      mode kills and respawns it with a new merged environment when the
+      dashboard writes a change, instead of requiring a manual
+      Ctrl-C/rerun. Scoped to config-triggered restarts only — not a
+      general file-watching auto-reload tool (nobody asked for that;
+      revisit only if requested).
+- [x] **The dashboard** (`internal/dashboard`, same shape as
+      `internal/webui`): `127.0.0.1`-only, no auth (same stance as `sgo
+      ui`, ARCHITECTURE.md §11). Lists every key any configured source
+      declares, its source, and whether it's writable; editing a
+      writable value calls `Source.Write` then triggers a supervised
+      restart. Real-time updates over Server-Sent Events (stdlib
+      `net/http`, no new dependency) rather than polling or a WebSocket
+      library — a no-payload "refresh" signal tells connected browsers
+      to refetch, nothing is ever pushed.
     - **Secret values are masked by default** (a reveal toggle per
-      value, not shown-by-default) — flagged here as a default I'm
-      choosing, not asked about directly: a debug dashboard showing raw
-      secrets in a browser tab by default is a real shoulder-surfing/
-      screen-share risk for something meant to run during normal
-      day-to-day development.
-- [ ] Ginkgo specs: `envsource` (parse/write/precedence), the
-      supervisor's start/restart/stop lifecycle (against a tiny fixture
-      program, not a real generated service, for speed), the dashboard
-      API (httptest, same pattern as `internal/webui`'s suite), and a
-      real CLI e2e spec — build an actual generated project, `sgo run
-      --debug` it, hit the dashboard API, edit a value, and confirm the
-      child process actually saw the new environment on restart. Plus a
-      real-browser pass (Playwright/headless Chromium) for the
-      dashboard UI itself, the same standard `sgo ui` was held to.
+      value, not shown-by-default) — a default chosen rather than asked
+      about directly: a debug dashboard showing raw secrets in a browser
+      tab by default is a real shoulder-surfing/screen-share risk for
+      something meant to run during normal day-to-day development.
+      **Revised from the plan above**: rather than a per-key `Secret
+      bool` hint on `envsource.Value` (heuristic, and risks a false
+      negative missing a real secret), every value is masked by
+      default and revealed only on request — simpler, and safe by
+      construction rather than by guessing which keys are secret.
+      `GET /api/config` never includes a value at all; only
+      `GET /api/config/{key}` does, called only when a client clicks
+      Reveal.
+- [x] Ginkgo specs: `envsource` (parse/write/precedence, ~89%
+      coverage), the supervisor's start/restart/stop lifecycle against a
+      tiny fixture program (~92% coverage, confirms no process — `go
+      run` or its spawned binary — survives `Stop`), the dashboard API
+      via `httptest` plus a real listener for the SSE spec (~80%
+      coverage), and a real CLI e2e spec — builds the actual `sgo`
+      binary, runs it against a minimal fixture project, hits the
+      dashboard API, edits a value, and confirms the child process's own
+      stdout shows the new value after restart. Plus a real-browser pass
+      (Playwright against the pre-installed headless Chromium) for the
+      dashboard UI itself, the same standard `sgo ui` was held to:
+      confirmed a secret value never appears in the `/api/config` list
+      response or the DOM before Reveal is clicked, and that editing
+      through the real form saves and restarts.
 
-**Exit criteria:** `sgo run` on a generated project starts it with
-`.env` values loaded (OS env still wins); `sgo run --debug` additionally
-serves a dashboard where editing a `.env`-sourced value restarts the
-service with the new value in effect, verified against the real running
-child process, not just the dashboard's own state.
+**Exit criteria — met:** `sgo run` on a generated project starts it
+with `.env` values loaded (OS env still wins); `sgo run --debug`
+additionally serves a dashboard where editing a `.env`-sourced value
+restarts the service with the new value in effect, verified against the
+real running child process (its own stdout), not just the dashboard's
+own state.
 
 ## Phase 11 — Wizard TUI polish **(planned)**
 

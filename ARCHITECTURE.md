@@ -571,7 +571,7 @@ checked independently with Python's `openapi-spec-validator` — a tool
 that never touches sgo's own vendored schemas or validation code —
 confirming both agree the output is valid.
 
-## 14. Loading indicators **(planned, Phase 9)**
+## 14. Loading indicators ✅
 
 `internal/progress` wraps a blocking call with a terminal spinner:
 `\r<frame> <message>` on a ticker in its own goroutine, cleared (not
@@ -584,18 +584,22 @@ needs.
 TTY-aware the same way `sgo init` already decides wizard-vs-flags
 (`internal/commands/init.go`'s `isatty.IsTerminal` check, §10): animates
 only when stdout is a real terminal, otherwise prints one `<verb>…`
-line before the call and `done`/an error after — piped output (what
-`runSgo` in the CLI e2e suite already captures, and any script or CI
-log) stays readable, never full of `\r` control characters.
+line before the call — piped output (what `runSgo` in the CLI e2e suite
+already captures, and any script or CI log) stays readable, never full
+of `\r` control characters.
 
-Wired into `sgo init`, `sgo generate proto`, `sgo generate code` (one
-spinner per pipeline stage — compiling the proto, generating the
-domain, generating the HTTP adapter, and so on — not one spinner for
-the whole command, so a slow individual stage is visible rather than
-hidden behind a single opaque "Generating…"), and `sgo generate
-openapi`.
+Wired into `sgo init`, `sgo generate proto`, `sgo generate code`, and
+`sgo generate openapi` — one spinner per whole command, not one per
+pipeline stage inside `generate code` as originally planned. Per-stage
+spinners (compiling the proto, generating the domain, generating the
+HTTP adapter, ...) would mean threading a progress-reporting callback
+through `internal/codegen`'s generator functions, which are
+deliberately UI-agnostic (the same functions `internal/webui`'s
+handlers call directly, Decision #8) — not worth it for a command
+that already completes in well under a second against real generated
+projects.
 
-## 15. `sgo run` and the `--debug` config dashboard **(planned, Phase 10)**
+## 15. `sgo run` and the `--debug` config dashboard ✅
 
 `sgo run [--debug] [--debug-port 4748]` runs a generated project's
 service the way `go run` would, with configuration loaded from `.env`
@@ -631,7 +635,6 @@ Phase 8:
 ```go
 type Value struct {
     Key, Value, Source string // Source: "env" | "dotenv" | (later) "repo" | "kms" | ...
-    Secret bool                // hint: mask in the dashboard by default
 }
 
 type Source interface {
@@ -645,34 +648,64 @@ type Source interface {
 ```
 
 `DotEnvSource` is the one real implementation: parses and rewrites
-`.env`, preserving line order. Merge precedence when `sgo run` starts:
-real OS environment variables win over `.env` values — the convention
-most `.env` tooling already follows, so a real prod/CI environment
-variable already set is never silently shadowed by a leftover local
-`.env` file.
+`.env`, preserving line order (rewriting an existing key's line does
+drop that one line's original quoting/comment style — file order and
+every *other* line are the guarantee, not one edited line's exact
+original formatting). `envsource.Merge(ctx, sources)` combines every
+source's `Fetch` with the real process environment into one slice for
+`exec.Cmd.Env`: source values first, then `os.Environ()` last, so a
+real OS/CI variable already set always wins over a leftover `.env`
+value (`exec.Cmd` keeps only the last occurrence of a duplicate key).
+Both `sgo run`'s own startup and the dashboard's restart path call this
+one function, rather than two implementations of the same precedence
+rule.
 
-**Process supervisor** (`internal/run`): owns the child `go run
-./cmd/<name>` process (found by locating the project's one `cmd/<name>/`
-directory — there's only ever one, per §3). In `--debug` mode, a
-dashboard-driven config write kills and respawns the child with the
-new merged environment. Scoped deliberately narrow: restarts only on a
-config change the dashboard made, not a general file-watching
-auto-reload tool (`air`/`nodemon`-style) — nobody asked for that, and
-conflating "restart because config changed" with "restart because
-source changed" would be two different features sharing one supervisor
-for no reason yet.
+Deliberately **no `Secret bool` field** on `Value`, unlike this
+section's original sketch: a per-key heuristic risks a false negative
+(a real secret nobody flagged), where masking *every* value by default
+and revealing on request (below) is safe by construction instead of by
+guessing which keys are secret.
 
-**The dashboard** (new package, alongside `internal/webui` in spirit —
-`127.0.0.1`-only, no auth, same stance as §11): lists every merged
-key, its source, and whether that source is writable; editing a
-writable value calls `Source.Write` then triggers a supervised restart.
-Live updates via Server-Sent Events (stdlib `net/http`, no new
-dependency) rather than polling or a WebSocket library — simplest
-mechanism that's still genuinely push-based for a single-viewer debug
-tool. **Secret values are masked by default**, a reveal toggle per
-value rather than shown outright — a default chosen rather than asked
-about directly: a debug dashboard people run during normal day-to-day
-development showing raw secrets in a browser tab by default is a real
+**Process supervisor** (`internal/run`): `Supervisor` owns one `go run
+./cmd/<name>` child at a time (`cmd/<name>` found via `FindCmdDir` —
+there's only ever one, per §3) — `Start`/`Stop`/`Restart` with a full
+environment, plus `Wait` for a blocking run loop. `Stop` kills the
+child's *whole process group* (`Setpgid: true` at `Start`, then a
+negative-PID `SIGKILL`), not just the `go` toolchain process — `go
+run` spawns the actual compiled binary as its own child process, and
+killing only the direct child would orphan it. `Wait` and `Restart`
+are not meant to be called concurrently from different goroutines:
+once `Restart` swaps in a new child, the channel a blocked `Wait` call
+already captured is stale. `sgo run`'s non-debug mode uses `Wait` (raced
+against Ctrl-C) as its blocking loop and never calls `Restart`;
+`--debug` mode calls `Restart` from dashboard-driven writes and never
+calls `Wait` — it blocks on Ctrl-C instead. Scoped deliberately narrow:
+restarts only on a config change the dashboard made, not a general
+file-watching auto-reload tool (`air`/`nodemon`-style) — nobody asked
+for that, and conflating "restart because config changed" with
+"restart because source changed" would be two different features
+sharing one supervisor for no reason yet.
+
+**The dashboard** (`internal/dashboard`, alongside `internal/webui` in
+spirit — `127.0.0.1`-only, no auth, same stance as §11): `GET
+/api/config` lists every key any configured source declares, its
+effective source, and whether it's writable — a key also set in the
+real environment reports source `"env"` and isn't writable, since
+writing its `.env` line wouldn't change what the child actually sees.
+`PUT /api/config/{key}` writes the new value back through whichever
+source declared it, then calls `Supervisor.Restart` with the freshly
+merged environment. Live updates via Server-Sent Events (stdlib
+`net/http`, no new dependency) rather than polling or a WebSocket
+library: a no-payload `"refresh"` signal tells connected browsers to
+refetch after any client's edit — simplest mechanism that's still
+genuinely push-based for a single-viewer debug tool, and nothing is
+ever pushed unprompted. **Secret values are masked by default**: `GET
+/api/config` never includes a value at all, only `GET
+/api/config/{key}` does — a value crosses the wire only once a client
+explicitly asks for that one key, e.g. clicking the frontend's Reveal
+button — a default chosen rather than asked about directly, since a
+debug dashboard people run during normal day-to-day development
+showing raw secrets in a browser tab by default is a real
 shoulder-surfing/screen-share risk.
 
 ## 16. Wizard TUI polish **(planned, Phase 11)**

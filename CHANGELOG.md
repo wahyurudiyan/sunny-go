@@ -5,6 +5,33 @@ All notable changes to `sgo` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-09-22
+
+Loading indicators, and `sgo run [--debug]` with a live config
+dashboard, both described in full in `ARCHITECTURE.md` §14/§15 and
+`PLAN.md` Phases 9/10.
+
+### Added
+
+- **`sgo run [--debug] [--debug-port 4748]`** — run the current
+  project's service the way `go run ./cmd/<name>` would, loading
+  configuration from `.env` (a real OS/CI environment variable already
+  set always wins over a leftover `.env` value). Stops the service
+  cleanly on Ctrl-C.
+- **`--debug`** additionally serves a `127.0.0.1`-only config
+  dashboard: lists every config key in effect, its source, and
+  whether it's writable; editing a writable value writes it back to
+  `.env` and restarts the service with the new value in effect. Live
+  updates via Server-Sent Events. Values are masked by default — never
+  sent to the browser until you explicitly reveal one.
+- `internal/run/envsource` — the `Source` interface configuration
+  providers implement (`.env` today; a remote config repo and
+  KMS/Vault-style secret managers are a defined interface with no
+  concrete adapter yet).
+- Terminal loading spinners for `sgo init`, `sgo generate
+  {proto,code,openapi}` — animates on a real terminal, prints a plain
+  status line when piped (CI/scripts unaffected).
+
 ## [0.1.0] - 2026-09-22
 
 Replaces the generated architecture's hexagonal core with real DDD
@@ -153,5 +180,6 @@ phase by phase per `PLAN.md`.
   Postgres and Redis are exercised against real local instances when
   available.
 
+[0.2.0]: https://github.com/wahyurudiyan/sunny-go/releases/tag/v0.2.0
 [0.1.0]: https://github.com/wahyurudiyan/sunny-go/releases/tag/v0.1.0
 [0.0.1]: https://github.com/wahyurudiyan/sunny-go/releases/tag/v0.0.1

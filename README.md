@@ -10,12 +10,15 @@ without ever touching the business logic you've already written.
 > **Status:** in active development, but everything documented below is
 > real and working, not aspirational. `sgo init`, `sgo generate
 > {proto,code,openapi}`, `sgo openapi {validate,ui}`, `sgo list
-> {services,endpoints}`, and `sgo ui` all run today: a generated project
-> serves HTTP and gRPC as soon as you implement its application service,
-> backed by a real Postgres, MySQL, or MongoDB repository if you selected
-> one (in-memory otherwise), with Redis/Elasticsearch clients wired up if
-> selected too. See [`docs/CLI.md`](docs/CLI.md) for the exact command
-> reference and [`PLAN.md`](PLAN.md) for what's still ahead.
+> {services,endpoints}`, `sgo run [--debug]`, and `sgo ui` all run
+> today: a generated project serves HTTP and gRPC as soon as you
+> implement its application service, backed by a real Postgres, MySQL,
+> or MongoDB repository if you selected one (in-memory otherwise), with
+> Redis/Elasticsearch clients wired up if selected too. `sgo run` runs
+> it like `go run` would, loading `.env`; `sgo run --debug` additionally
+> serves a localhost dashboard for viewing and editing that
+> configuration live. See [`docs/CLI.md`](docs/CLI.md) for the exact
+> command reference and [`PLAN.md`](PLAN.md) for what's still ahead.
 
 ## Table of contents
 
@@ -76,7 +79,7 @@ go install github.com/wahyurudiyan/sunny-go/cmd/sgo@latest
 ```
 
 This installs the `sgo` binary to `$(go env GOPATH)/bin` — make sure
-that's on your `PATH`. Pin a specific release with `@v0.1.0` instead of
+that's on your `PATH`. Pin a specific release with `@v0.2.0` instead of
 `@latest`; see [`CHANGELOG.md`](CHANGELOG.md) and the
 [releases page](https://github.com/wahyurudiyan/sunny-go/releases) for
 what each version contains.

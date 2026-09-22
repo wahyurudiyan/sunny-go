@@ -10,6 +10,7 @@ import (
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/openapigen"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/proto"
 	"github.com/wahyurudiyan/sunny-go/internal/config"
+	"github.com/wahyurudiyan/sunny-go/internal/progress"
 )
 
 var generateCmd = &cobra.Command{
@@ -40,7 +41,10 @@ Example:
 			os.Exit(1)
 		}
 
-		if err := proto.GenerateStub("contract/pb", name, cfg.Module); err != nil {
+		err = progress.Run("Scaffolding contract/pb/"+name+".proto", func() error {
+			return proto.GenerateStub("contract/pb", name, cfg.Module)
+		})
+		if err != nil {
 			fmt.Printf("❌ Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -80,7 +84,10 @@ Example:
 			os.Exit(1)
 		}
 
-		if err := codegen.GenerateCode(".", name, cfg); err != nil {
+		err = progress.Run("Generating code for "+name, func() error {
+			return codegen.GenerateCode(".", name, cfg)
+		})
+		if err != nil {
 			fmt.Printf("❌ Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -137,7 +144,12 @@ Example:
 			cfg.OpenAPI.Format = config.OpenAPIFormat(generateOpenAPIFormat)
 		}
 
-		path, err := openapigen.Generate(cfg, ".")
+		var path string
+		err = progress.Run("Generating OpenAPI documentation", func() error {
+			var genErr error
+			path, genErr = openapigen.Generate(cfg, ".")
+			return genErr
+		})
 		if err != nil {
 			fmt.Printf("❌ Error: %v\n", err)
 			os.Exit(1)

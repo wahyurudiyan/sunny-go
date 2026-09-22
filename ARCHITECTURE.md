@@ -716,7 +716,7 @@ whatever this command prints is structurally what the generated HTTP
 adapter actually serves, the same load-bearing property §13's OpenAPI
 generator already relies on.
 
-## 19. OpenAPI discoverability + a live Swagger/Redoc UI **(planned, Phase 14)**
+## 19. OpenAPI discoverability + a live Swagger/Redoc UI **(done, Phase 14)**
 
 `sgo generate openapi` and `sgo openapi validate` (§13) already exist;
 what's missing is (a) anything in the terminal pointing at them, and (b)

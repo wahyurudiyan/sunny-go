@@ -261,6 +261,35 @@ exist yet). With a path, validates that file instead — `sgo`-generated
 or hand-authored/imported, and doesn't need to be run from inside an
 `sgo` project at all.
 
+## `sgo openapi ui` ✅
+
+```
+sgo openapi ui [--port 4749]
+```
+
+Serves the current project's already-generated `docs/openapi.<ext>`
+through an embedded, offline [Redoc](https://github.com/Redocly/redoc)
+viewer at `http://127.0.0.1:<port>` (default `4749`) — a real
+interactive API reference (endpoints, request/response schemas, a
+"download spec" link), not raw YAML/JSON in a text editor.
+
+Errors clearly and doesn't start a server if `docs/openapi.<ext>`
+doesn't exist yet — run `sgo generate openapi` first, same contract
+`sgo openapi validate` already has. Reads the document fresh from disk
+on every request rather than caching it at startup, so re-running `sgo
+generate openapi` while the server is up and refreshing the browser
+picks up the change — no restart needed.
+
+Binds to `127.0.0.1` only; no auth, since it never listens on anything
+but loopback — same stance `sgo ui` already takes. The Redoc bundle
+itself is vendored (`go:embed`, ~1.1 MB) rather than loaded from a CDN,
+so the viewer works with no network access at all. See ARCHITECTURE.md
+§19.
+
+`sgo generate code` prints a reminder to run `sgo generate openapi`
+once it's generated a service, the same "next steps" pattern `sgo init`
+already uses for `sgo generate proto`.
+
 ## Removed/renamed from the current CLI
 
 | Current (`sunny`) | New (`sgo`) | Why |

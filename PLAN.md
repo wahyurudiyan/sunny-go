@@ -755,7 +755,7 @@ services prints exactly the routes the generated HTTP adapter actually
 registers — verified against the generated route file, not just
 `BuildRoutes`'s own output a second time.
 
-## Phase 14 — OpenAPI discoverability + a live Swagger/Redoc UI **(planned)**
+## Phase 14 — OpenAPI discoverability + a live Swagger/Redoc UI **(done)**
 
 Full design in ARCHITECTURE.md §17. `sgo generate openapi` and `sgo
 openapi validate` already exist (Phase 8) — this phase covers both
@@ -763,19 +763,19 @@ halves of what was actually missing: nothing in the terminal points you
 at them, and there's no way to *browse* the generated document short of
 opening the raw YAML/JSON.
 
-- [ ] **Discoverability** — `sgo generate code` prints a "Next steps"
+- [x] **Discoverability** — `sgo generate code` prints a "Next steps"
       hint mentioning `sgo generate openapi` once a service exists, the
       same way `sgo init` already prints one for `sgo generate proto`;
       README's status line and quick start call it out explicitly
       (partly done already, finish the rest).
-- [ ] **`sgo openapi ui [--port 4749]`** — serves the project's
+- [x] **`sgo openapi ui [--port 4749]`** — serves the project's
       generated `docs/openapi.<ext>` through an embedded interactive API
       doc viewer at `http://127.0.0.1:<port>` (same `127.0.0.1`-only, no
       auth stance as `sgo ui`/`sgo run --debug`, §11/§15). Reads
       whatever's already on disk — same "run `sgo generate openapi`
       first if it doesn't exist yet" UX `sgo openapi validate` already
       has, not auto-regenerating on every request.
-- [ ] Vendor a specific pinned version of a standalone doc-viewer bundle
+- [x] Vendor a specific pinned version of a standalone doc-viewer bundle
       (evaluating Redoc's single-file standalone build against
       `swagger-ui-dist`'s multi-file one — whichever is smaller wins,
       same self-contained-by-default stance as the vendored OpenAPI
@@ -783,10 +783,16 @@ opening the raw YAML/JSON.
       works offline, consistent with every other "no external dependency
       at runtime" choice this project has made (pure-Go proto compiler,
       pre-installed browser in dev, vendored meta-schemas).
-- [ ] Ginkgo specs (`httptest`, same pattern as `internal/webui`/
-      `internal/dashboard`) plus a real-browser Playwright pass
-      confirming the page actually renders the project's real paths —
-      same standard `sgo ui` and the Phase 10 dashboard were held to.
+- [x] Ginkgo specs (`internal/openapiui`'s own `httptest`-based content
+      specs, plus a real CLI e2e spec in `internal/commands` that starts
+      the actual compiled binary as a background process and drives it
+      over a real socket) plus a real-browser Playwright pass confirming
+      the page actually renders the project's real paths — same standard
+      `sgo ui` and the Phase 10 dashboard were held to. The Playwright
+      pass was a manual one-off verification (screenshotted, not
+      committed as an automated test), the same as task-list item
+      "Manually verify sgo ui in a real browser" was for `sgo ui` itself
+      — not part of `go test ./...`.
 
 **Exit criteria:** `sgo generate code` visibly points at `sgo generate
 openapi`; `sgo openapi ui` on a project with a generated doc serves a

@@ -92,32 +92,13 @@ type Paths struct {
 	Entity string // lowercase entity/service name, e.g. "user"
 }
 
-func (p Paths) DomainImportPath() string {
-	return path.Join(p.Module, "internal/core/domain", p.Entity)
-}
-
-func (p Paths) PortInImportPath() string {
-	return path.Join(p.Module, "internal/core/port/in")
-}
-
-func (p Paths) PortOutImportPath() string {
-	return path.Join(p.Module, "internal/core/port/out")
-}
-
 func (p Paths) WireImportPath() string {
 	return path.Join(p.Module, "contract/gen", p.Entity)
 }
 
-func (p Paths) MapperImportPath() string {
-	return path.Join(p.Module, "internal/adapter/mapper")
-}
-
-// AggregateDomainImportPath is DomainImportPath's Phase 12 (ARCHITECTURE.md
-// §17) successor: internal/domain/<entity>, not internal/core/domain/
-// <entity>. Named distinctly from DomainImportPath while both exist
-// side by side; GenerateCode switches over once the
-// application/infrastructure generators exist too (§17's project-wide
-// rewiring).
+// AggregateDomainImportPath is internal/domain/<entity> (ARCHITECTURE.md
+// §17): the Aggregate Root, its Value Objects, Domain Events, and its
+// repository port.
 func (p Paths) AggregateDomainImportPath() string {
 	return path.Join(p.Module, "internal/domain", p.Entity)
 }

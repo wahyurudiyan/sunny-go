@@ -188,12 +188,16 @@ func buildTestModule(engine config.PersistenceEngine, mode config.PersistenceMod
 
 	protoDir := filepath.Join(dir, "contract", "pb")
 	file := userFile(protoDir)
+	fd, err := sgoproto.Compile(protoDir, "user.proto")
+	Expect(err).NotTo(HaveOccurred())
 	p := core.Paths{Module: "demo", Entity: "user"}
 
-	domainDir := filepath.Join(dir, "internal", "core", "domain", "user")
-	Expect(core.GenerateDomain(file, p, domainDir)).To(Succeed())
+	eventDir := filepath.Join(dir, "internal", "domain", "event")
+	Expect(core.GenerateEventKernel(eventDir)).To(Succeed())
+	domainDir := filepath.Join(dir, "internal", "domain", "user")
+	Expect(core.GenerateAggregate(file, fd, p, domainDir)).To(Succeed())
 
-	adapterDir := filepath.Join(dir, "internal", "adapter", "out", "persistence", string(engine))
+	adapterDir := filepath.Join(dir, "internal", "infrastructure", "persistence", string(engine))
 	Expect(sqlgen.Generate(engine, mode, file, p, adapterDir)).To(Succeed())
 
 	return dir
@@ -205,7 +209,7 @@ func buildTestModule(engine config.PersistenceEngine, mode config.PersistenceMod
 func runInModule(moduleDir, body, connectSnippet string) string {
 	GinkgoHelper()
 
-	main := "package main\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\n\tuser \"demo/internal/core/domain/user\"\n\tpostgres \"demo/internal/adapter/out/persistence/postgres\"\n)\n\nfunc main() {\n" +
+	main := "package main\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\n\tuser \"demo/internal/domain/user\"\n\tpostgres \"demo/internal/infrastructure/persistence/postgres\"\n)\n\nfunc main() {\n" +
 		"\t\t\t\t" + connectSnippet + "\n" + body + "\n}\n"
 
 	mainDir := filepath.Join(moduleDir, "cmd", "harness")

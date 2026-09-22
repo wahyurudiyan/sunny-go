@@ -705,7 +705,7 @@ supported (safe regeneration finds an owned file by its *current*
 expected path and shape; retargeting either needs a real migration this
 phase doesn't build). Logged in PLAN.md's Non-goals.
 
-## 18. `sgo list endpoints` **(planned, Phase 13)**
+## 18. `sgo list endpoints` **(done, Phase 13)**
 
 Reuses `internal/codegen/httpgen.BuildRoutes` directly — the same
 function `sgo generate openapi` (§13) and the generated

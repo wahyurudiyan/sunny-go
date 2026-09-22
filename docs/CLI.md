@@ -153,6 +153,33 @@ Lists services tracked in `sgo.yaml` (populated by `sgo generate code`),
 and for each: proto present? `contract/gen` present? domain entity
 present? service implementation present?
 
+## `sgo list endpoints` ✅
+
+```
+sgo list endpoints [service]
+```
+
+Prints every HTTP route currently derived for the project's registered
+services (all of them with no argument, one with it): method, path, and
+the RPC it comes from — e.g.:
+
+```
+product:
+  POST   /api/v1/products               CreateProduct
+  GET    /api/v1/products/:id           GetProduct
+  GET    /api/v1/products               ListProducts
+  PUT    /api/v1/products/:id           UpdateProduct
+  DELETE /api/v1/products/:id           DeleteProduct
+```
+
+Reuses `internal/codegen/httpgen.BuildRoutes` directly — the exact same
+function the generated `*_routes_gen.go` registrations and `sgo generate
+openapi` (ARCHITECTURE.md §13) both already derive from, and the id-path
+placeholder syntax matches the project's selected HTTP framework
+(`:id` for Gin/Echo, `{id}` for Chi) — this prints what the generated
+adapter actually serves, not a second, independently-derived guess at
+it. See ARCHITECTURE.md §18.
+
 ## `sgo validate <proto-file>` — not yet implemented
 
 Not currently a command. Proto errors currently surface as part of

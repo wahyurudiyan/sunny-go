@@ -731,13 +731,13 @@ think a later `layout:`-style override wouldn't hit the exact same
 already-generated-files problem the earlier version of this phase
 flagged — logged in Non-goals below, not solved by this phase either).
 
-## Phase 13 — `sgo list endpoints` **(planned)**
+## Phase 13 — `sgo list endpoints` **(done)**
 
 Small, independent of Phases 12/14/15 — ships fast, gets more useful
 once Phase 15 lands proto-defined paths but doesn't depend on it. Full
 design in ARCHITECTURE.md §16.
 
-- [ ] `sgo list endpoints [<service>]` — prints every HTTP route
+- [x] `sgo list endpoints [<service>]` — prints every HTTP route
       currently derived for the project's registered services (all of
       them with no argument, one with it): method, path, and which
       RPC/service it comes from. Reuses
@@ -745,7 +745,7 @@ design in ARCHITECTURE.md §16.
       route list `sgo generate openapi` already turns into
       `docs/openapi.<ext>` and the generated `*_routes_gen.go` actually
       registers, not a second derivation.
-- [ ] Ginkgo specs (content per framework selection) plus a CLI e2e spec
+- [x] Ginkgo specs (content per framework selection) plus a CLI e2e spec
       asserting the printed table matches the generated route file's own
       registrations, same cross-check `openapigen/generate_test.go`
       already does for the OpenAPI document.

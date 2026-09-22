@@ -104,3 +104,24 @@ var _ = Describe("Generate", func() {
 		Expect(err).To(MatchError(ContainSubstring("unsupported HTTP framework")))
 	})
 })
+
+var _ = Describe("IDPlaceholder", func() {
+	It("matches each framework's own routes template syntax", func() {
+		gin, err := httpgen.IDPlaceholder(config.HTTPFrameworkGin)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gin).To(Equal(":id"))
+
+		echo, err := httpgen.IDPlaceholder(config.HTTPFrameworkEcho)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(echo).To(Equal(":id"))
+
+		chi, err := httpgen.IDPlaceholder(config.HTTPFrameworkChi)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(chi).To(Equal("{id}"))
+	})
+
+	It("rejects an unsupported framework", func() {
+		_, err := httpgen.IDPlaceholder("fiber")
+		Expect(err).To(MatchError(ContainSubstring("unsupported HTTP framework")))
+	})
+})

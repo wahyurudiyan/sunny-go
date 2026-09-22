@@ -44,6 +44,20 @@ var frameworks = map[config.HTTPFramework]framework{
 	},
 }
 
+// IDPlaceholder returns fw's id-path-param syntax (":id" for gin/echo,
+// "{id}" for chi) — the exact same lookup GenerateRoutes uses, exported
+// so a caller building a Route's FullPath outside this package (e.g.
+// `sgo list endpoints`, ARCHITECTURE.md §18) shows exactly what the
+// generated adapter actually registers, not a second guess at the
+// framework's syntax.
+func IDPlaceholder(fw config.HTTPFramework) (string, error) {
+	def, ok := frameworks[fw]
+	if !ok {
+		return "", fmt.Errorf("httpgen: unsupported HTTP framework %q", fw)
+	}
+	return def.idPlaceholder, nil
+}
+
 // ImportPath is where the HTTP adapter for the given framework lives,
 // e.g. "<module>/internal/infrastructure/transport/http/gin"
 // (ARCHITECTURE.md §17).

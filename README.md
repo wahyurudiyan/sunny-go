@@ -76,7 +76,7 @@ go install github.com/wahyurudiyan/sunny-go/cmd/sgo@latest
 ```
 
 This installs the `sgo` binary to `$(go env GOPATH)/bin` — make sure
-that's on your `PATH`. Pin a specific release with `@v0.0.1` instead of
+that's on your `PATH`. Pin a specific release with `@v0.1.1` instead of
 `@latest`; see [`CHANGELOG.md`](CHANGELOG.md) and the
 [releases page](https://github.com/wahyurudiyan/sunny-go/releases) for
 what each version contains.

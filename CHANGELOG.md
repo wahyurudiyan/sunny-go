@@ -5,6 +5,100 @@ All notable changes to `sgo` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-09-22
+
+Replaces the generated architecture's hexagonal core with real DDD
+tactical patterns (aggregates, value objects, domain events, a CQRS
+application layer), then builds five more phases on top of it:
+discoverability (`sgo list endpoints`, an OpenAPI viewer UI),
+proto-defined HTTP routing, repository-port methods beyond fixed CRUD,
+and a rewritten README/CONTRIBUTING.md. Full detail in `ARCHITECTURE.md`
+and `PLAN.md`.
+
+### Added
+
+- **DDD domain/application/infrastructure layers**, replacing the
+  previous hexagonal core/port/adapter layout: `internal/domain/<entity>`
+  (Aggregate Root, Value Objects, Domain Events, repository port,
+  sentinel errors), `internal/application/<entity>` (CQRS command/query
+  DTOs and an application service), `internal/infrastructure` (HTTP/gRPC
+  transport, persistence, the `wire_gen.go` composition root). Role
+  inference (aggregate root, value object, domain event, command, query)
+  is driven by real vendored proto extensions
+  (`import "sgo/options.proto";`), not a second hand-authored modeling
+  file. Field-level invariants are enforced for real via
+  `buf.build/go/protovalidate`, not hand-rolled CEL evaluation.
+- **`sgo list endpoints [service]`** — print every HTTP route currently
+  derived for one or all registered services (method, path, source RPC),
+  reusing the exact route-derivation function the generated adapter and
+  `sgo generate openapi` already call.
+- **`sgo openapi ui [--port 4749]`** — serve a project's generated
+  OpenAPI document through an embedded, offline
+  [Redoc](https://github.com/Redocly/redoc) viewer — a real interactive
+  API reference, not raw YAML in a text editor. `sgo generate code` now
+  also prints a reminder to run `sgo generate openapi` once a service
+  exists.
+- **Proto-defined HTTP paths (`google.api.http`)** — an RPC carrying a
+  real `(google.api.http)` annotation (vendored
+  `google/api/http.proto`/`annotations.proto`, still no `protoc`/`buf`
+  or network access required) now drives its generated route's method,
+  path, and body directly, with multiple independently-named path
+  parameters supported, not just `id`. An RPC without one keeps today's
+  `Create`/`Get`/`List`/`Update`/`Delete` naming-convention routing,
+  unchanged. `option (sgo.base_path) = "/v2";` on a service overrides the
+  default `/api/v1` prefix for every route it derives.
+- **Repository-port methods beyond fixed CRUD** — `option
+  (sgo.repository_query) = true;` on an RPC adds a matching method to
+  the domain repository port (e.g. `FindByEmail(ctx, email string)`),
+  alongside its usual application-service method, HTTP route, and gRPC
+  method. The in-memory adapter auto-implements it as a linear scan when
+  it takes one scalar parameter matching a domain field; Postgres/MySQL/
+  MongoDB adapters get an owned companion file with a
+  `panic("sgo: TODO implement ...")` stub instead, since real query
+  logic can't be auto-generated — a hand-written implementation survives
+  every later `sgo generate code` run, the same as `service.go` does.
+  `option (sgo.hide_route) = true;` independently skips HTTP route
+  registration for an RPC without affecting its gRPC method or
+  repository counterpart.
+- **README.md rewritten as a full getting-started guide**: table of
+  contents, install, an expanded quick start, a project-layout tree
+  captured from a real generated project, the generated-vs-owned file
+  split, a full `sgo.*`/`google.api.http` proto option reference with a
+  worked example, HTTP routing, repository queries beyond CRUD,
+  persistence/cache/search, OpenAPI, the web UI, a command reference
+  table, an `sgo.yaml` reference, and an FAQ/troubleshooting section.
+- **`CONTRIBUTING.md`** — build/test instructions moved out of README.md
+  into their own file, expanded with the phase-based
+  plan → `AskUserQuestion` → `ARCHITECTURE.md`/`PLAN.md` → implement → PR
+  workflow this project actually uses.
+
+### Changed
+
+- HTTP routes are no longer exclusively derived from RPC naming — see
+  "Proto-defined HTTP paths" above. Every proto that doesn't opt into a
+  `(google.api.http)` annotation keeps generating byte-identical routes.
+- The repository port is still a fixed `Create`/`Get`/`List`/`Update`/
+  `Delete` shape by default, now extensible per RPC — see
+  "Repository-port methods beyond fixed CRUD" above.
+- Requires Go 1.26+ (up from 1.25+), picked up automatically via the Go
+  toolchain mechanism when adding the real
+  `google.golang.org/genproto/googleapis/api/annotations` dependency for
+  `google.api.http` support.
+
+### Known gaps
+
+- **Shared kernel** (a value object declared once and reused by multiple
+  entities' protos via `import`) is deferred — each entity's value
+  objects currently regenerate per file that declares them.
+- **GORM value-object field embedding** isn't implemented yet — the ORM
+  persistence mode doesn't yet map a value object onto embedded GORM
+  columns.
+- A `repository_query` method's request must be entirely scalar fields
+  (no nested messages, no repeated fields), and its response is always
+  the existing single-entity shape — no list-shaped (paginated) custom
+  queries yet. Both fail generation with a clear error rather than
+  guessing.
+
 ## [0.0.1] - 2026-09-21
 
 First real release: a working proto-first Go service generator, both a
@@ -59,4 +153,5 @@ phase by phase per `PLAN.md`.
   Postgres and Redis are exercised against real local instances when
   available.
 
+[0.1.1]: https://github.com/wahyurudiyan/sunny-go/releases/tag/v0.1.1
 [0.0.1]: https://github.com/wahyurudiyan/sunny-go/releases/tag/v0.0.1

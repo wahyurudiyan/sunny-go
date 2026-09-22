@@ -11,7 +11,7 @@ import (
 // Version is sgo's own release version (not to be confused with the
 // OpenAPI document version a generated project can select) — see
 // CHANGELOG.md. Bump this alongside a new CHANGELOG.md entry.
-const Version = "0.0.1"
+const Version = "0.1.1"
 
 var rootCmd = &cobra.Command{
 	Use:     "sgo",
@@ -19,7 +19,8 @@ var rootCmd = &cobra.Command{
 	Version: Version,
 	Long: color.HiWhiteString(banner.SunnyGoBannerBold) + `
 sgo is an open-source CLI tool to bootstrap and evolve a Go service from a
-proto contract, serving both HTTP and gRPC from a hexagonal core.
+proto contract, serving both HTTP and gRPC from a DDD-layered
+domain/application/infrastructure core.
 
 Run 'sgo init' to scaffold a new project, then 'sgo generate proto' and
 'sgo generate code' to add services to it. See ARCHITECTURE.md and

@@ -27,9 +27,12 @@ implementation (see [Decisions](#decisions) below).
 
 ## 2. Core principles
 
-- **Hexagonal core.** `internal/core` (domain + ports + use-case services)
-  has zero dependency on HTTP frameworks, gRPC, SQL drivers, or ORMs.
-  Everything framework/vendor-specific lives in `internal/adapter/*` and
+- **Layered core, no framework leakage.** `internal/domain` and
+  `internal/application` (the aggregate/value-object/domain-event model
+  and its CQRS orchestration — **§17 (Phase 12), superseding this
+  section's original `internal/core` description**) have zero dependency
+  on HTTP frameworks, gRPC, SQL drivers, or ORMs. Everything
+  framework/vendor-specific lives in `internal/infrastructure/*` and
   talks to the core only through ports (Go interfaces).
 - **Generated vs. owned files are different files.** `sgo` never tries to
   merge generated and hand-written code inside one file via AST surgery.
@@ -69,43 +72,46 @@ myservice/
 │           ├── user.pb.go
 │           └── user_grpc.pb.go
 ├── internal/
-│   ├── core/                      # the hexagon — no external deps
-│   │   ├── domain/
-│   │   │   └── user/
-│   │   │       ├── user_gen.go    # generated: fields mapped from proto
-│   │   │       └── user.go        # owned: domain methods/validation
-│   │   ├── port/
-│   │   │   ├── in/
-│   │   │   │   └── user_usecase.go     # generated: driving port
-│   │   │   └── out/
-│   │   │       ├── user_repository.go  # generated: driven port (data)
-│   │   │       ├── cache.go            # generated: driven port (Redis)
-│   │   │       └── search.go           # generated: driven port (ES)
-│   │   └── service/
-│   │       └── user_service.go    # owned: use-case implementation
-│   ├── adapter/
-│   │   ├── in/
+│   ├── domain/                    # aggregates, value objects, domain events — no external deps (§17)
+│   │   ├── event/
+│   │   │   └── event.go           # generated: shared DomainEvent interface, every entity's events implement it
+│   │   └── user/
+│   │       ├── user_gen.go        # generated: Aggregate Root, Value Objects, Domain Events
+│   │       ├── aggregate.go       # owned: business methods, invariant-triggered event recording
+│   │       ├── repository.go      # generated: repository port (fixed CRUD, typed against the aggregate)
+│   │       └── errors.go          # generated: sentinel errors
+│   ├── application/               # CQRS command/query DTOs + orchestration (§17)
+│   │   ├── ports/
+│   │   │   └── event_publisher.go # generated: EventPublisher interface + no-op default
+│   │   └── user/
+│   │       ├── command_gen.go     # generated: Create/Update/Delete DTOs
+│   │       ├── query_gen.go       # generated: Get/List DTOs
+│   │       └── service.go         # owned: load aggregate -> mutate -> save -> publish events
+│   ├── infrastructure/
+│   │   ├── transport/
+│   │   │   ├── user_mapper_gen.go # generated: wire↔domain and wire↔application conversions, protovalidate-checked
 │   │   │   ├── http/
 │   │   │   │   └── gin/           # (or echo/, or chi/ — one is chosen)
 │   │   │   │       ├── server_gen.go       # wraps the framework's native engine
 │   │   │   │       └── user_routes_gen.go
 │   │   │   └── grpc/
 │   │   │       └── user_grpc_server_gen.go
-│   │   ├── out/
-│   │   │   ├── persistence/
-│   │   │   │   ├── memory/        # always generated — the default; see §8.2
-│   │   │   │   │   └── user_repository_gen.go
-│   │   │   │   └── postgres/      # self-managed or ORM impl (only if selected)
-│   │   │   │       ├── user_repository_gen.go
-│   │   │   │       └── conn_gen.go
-│   │   │   ├── cache/
-│   │   │   │   └── redis/         # cache_gen.go + conn_gen.go (only if selected)
-│   │   │   └── search/
-│   │   │       └── elasticsearch/ # search_gen.go + conn_gen.go (only if selected)
-│   │   └── mapper/
-│   │       └── user_mapper_gen.go # wire↔domain conversions (generated)
-│   └── bootstrap/
-│       └── wire_gen.go            # composition root, built from sgo.yaml
+│   │   ├── persistence/
+│   │   │   ├── memory/            # always generated — the default; see §8.2
+│   │   │   │   └── user_repository_gen.go
+│   │   │   └── postgres/          # self-managed or ORM impl (only if selected)
+│   │   │       ├── user_repository_gen.go
+│   │   │       └── conn_gen.go
+│   │   └── bootstrap/
+│   │       └── wire_gen.go        # composition root, built from sgo.yaml
+│   ├── core/port/out/             # Cache/Search ports — intentionally outside the DDD layers, see §8.2/§8.3/§17
+│   │   ├── cache.go                    # generated: driven port (Redis), only if selected
+│   │   └── search.go                   # generated: driven port (ES), only if selected
+│   └── adapter/out/               # Cache/Search adapters — same "intentionally outside" note
+│       ├── cache/
+│       │   └── redis/             # cache_gen.go + conn_gen.go (only if selected)
+│       └── search/
+│           └── elasticsearch/     # search_gen.go + conn_gen.go (only if selected)
 ├── cmd/
 │   └── myservice/
 │       └── main.go
@@ -116,7 +122,11 @@ myservice/
 
 Only the directories for datastores/frameworks actually selected in
 `sgo.yaml` are generated — an Echo-only, Postgres-only project never gets
-a `gin/` or `mongo/` directory.
+a `gin/` or `mongo/` directory. `internal/core/port/out` and
+`internal/adapter/out/{cache,search}` are the one deliberate holdover
+from the pre-§17 layout: Cache/Search are project-scoped, not
+entity-scoped, and not part of the DDD tactical patterns §17
+introduces, so relocating them wasn't in that phase's scope.
 
 ## 4. Proto workflow
 
@@ -147,8 +157,9 @@ a `gin/` or `mongo/` directory.
      which anyone using sgo to generate a Go project already has; no new
      dependency is added beyond what generating Go code already implies.
   4. Drives `text/template` codegen (`internal/codegen/core`) for the
-     domain entity, the usecase/repository ports, the service skeleton
-     (safely — see §6), and the wire↔domain mapper.
+     domain aggregate and its repository port, the CQRS command/query
+     DTOs and application service skeleton (safely — see §6), and the
+     wire↔domain/wire↔application mappers (§17).
   5. Runs `go mod tidy` in the project so the newly-imported
      `google.golang.org/protobuf`/`google.golang.org/grpc` dependencies
      are picked up automatically.
@@ -573,7 +584,7 @@ stable column. Fix: give every `Confirm` in a group the same explicit
 `WithWidth` so all of them anchor to that group's width instead of each
 one's own title length.
 
-## 17. Replace the generated architecture with DDD tactical patterns **(planned, Phase 12)**
+## 17. Replace the generated architecture with DDD tactical patterns **(mostly done, Phase 12 — shared kernel and GORM value-object embedding deferred, see PLAN.md Exit criteria)**
 
 **The largest single phase in this document.** Redefined via a
 follow-up `AskUserQuestion` round from a much smaller version of this
@@ -914,7 +925,7 @@ specs, written BDD-style, rather than plain `testing.T` table tests.
 | 1 | Binary renamed `sunny` → `sgo`; module path (`github.com/wahyurudiyan/sunny-go`) unchanged. | Matches the requested command name without a disruptive module-path/import rewrite. |
 | 2 | Retire `internal/templates/` and `internal/generate/` rather than adapt them. | ~85% of the existing template code was already dead (see prior analysis); the new hexagonal layout and generated/owned file split are a different enough shape that adapting in place would cost more than a clean rebuild under `internal/codegen/`. |
 | 3 | Generated vs. owned code is split by **file**, not by AST-merged sections within one file. | Far lower risk of corrupting hand-written logic; the AST-append step is scoped to *adding missing method stubs only*, never rewriting existing bodies. |
-| 4 | Domain entities are hand-shaped Go structs, decoupled from protobuf wire types, mapped via a generated adapter-layer mapper. **§17 (Phase 12, planned)** substantially extends this — aggregates, value objects, and domain events replace the plain flat-struct model — while keeping this decision's core property (no protobuf types in the domain layer) unchanged. | Keeps `internal/core` free of protobuf dependencies, consistent with hexagonal architecture; wire format can evolve without forcing domain changes. |
+| 4 | Domain entities are hand-shaped Go structs, decoupled from protobuf wire types, mapped via a generated adapter-layer mapper. **§17 (Phase 12, mostly done)** substantially extends this — aggregates, value objects, and domain events replace the plain flat-struct model — while keeping this decision's core property (no protobuf types in the domain layer) unchanged. | Keeps `internal/domain` free of protobuf dependencies, consistent with the layered core; wire format can evolve without forcing domain changes. |
 | 5 | ~~`buf` is the primary proto toolchain~~ **Revised (Phase 2):** descriptors are compiled with `bufbuild/protocompile` (pure Go); `contract/gen` is produced by running the real `protoc-gen-go`/`protoc-gen-go-grpc` plugins via `go run <module>@<version>`. No `buf` or `protoc` binary is required at all. | Fully resolves the "buf as a hard prerequisite" open question below rather than just picking a side: a Go toolchain is the only prerequisite, and it's one `sgo` already assumes (it generates Go code). Output is byte-identical to what `protoc`/`buf` would produce, since the same plugins do the generation. |
 | 6 | GORM for ORM-mode SQL persistence. | Most widely adopted Go ORM, supports both Postgres and MySQL, reduces the adapter surface area to build/maintain. |
 | 7 | Elasticsearch and Redis get their own ports (`search`, `cache`), not folded into the repository port. | Their access patterns (query DSL, key/TTL) don't fit a CRUD repository interface; forcing them into one would leak abstraction. |

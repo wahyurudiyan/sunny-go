@@ -63,57 +63,74 @@ Compiles `contract/pb/user.proto` (via a pure-Go compiler — no `buf`/
 - `contract/gen/user/*.pb.go`, `*_grpc.pb.go` — via the real
   `protoc-gen-go`/`protoc-gen-go-grpc` plugins, run with `go run
   <module>@<version>`
-- `internal/core/domain/user/user_gen.go` — a struct for every message in
-  the file
-- `internal/core/port/in/user_usecase.go` (mirrors the proto service's
-  RPCs), `internal/core/port/out/user_repository.go` (fixed
-  `Create/Get/List/Update/Delete` shape)
-- `internal/adapter/mapper/user_mapper_gen.go` — wire↔domain conversions
+- **Domain layer** (`internal/domain/user/`): `user_gen.go` — the
+  Aggregate Root (the message matching the entity name, or explicitly
+  marked `option (sgo.aggregate_root) = true;`), its Value Objects
+  (`option (sgo.value_object) = true;`) and Domain Events (`option
+  (sgo.domain_event) = true;`) — plus `repository.go` (the fixed
+  `Create/Get/List/Update/Delete` port, typed directly against the
+  aggregate) and `errors.go`. `internal/domain/event/event.go` — the
+  shared `DomainEvent` interface every entity's events implement, so one
+  `EventPublisher` can accept events from any of them
+- **Application layer** (`internal/application/user/`):
+  `command_gen.go`/`query_gen.go` — DTOs derived from each RPC's request
+  message, classified by naming convention (`Create/Update/Delete` →
+  command, `Get/List` → query, overridable with `(sgo.command)`/
+  `(sgo.query)`). `internal/application/ports/event_publisher.go` — the
+  shared `EventPublisher` interface and its no-op default
+- `internal/infrastructure/transport/user_mapper_gen.go` — wire↔domain
+  conversions, validated against any `(buf.validate.field)` constraints
+  the proto declares (real `buf.build/go/protovalidate`, not sgo
+  hand-rolling CEL evaluation) — plus wire↔application conversions for
+  the gRPC adapter's own request-side mapping
 - HTTP route registration for the project's `sgo.yaml`-selected framework
-  (`internal/adapter/in/http/<framework>/user_routes_gen.go` +
-  `server_gen.go`), with routes derived from the RPC naming convention
+  (`internal/infrastructure/transport/http/<framework>/user_routes_gen.go`
+  + `server_gen.go`), with routes derived from the RPC naming convention
   (`Create*`→`POST`, `Get*`→`GET .../{id}`, `List*`→`GET`,
   `Update*`→`PUT .../{id}`, `Delete*`→`DELETE .../{id}` — no
   `google.api.http` support yet, see ARCHITECTURE §8.1/§12)
 - A gRPC server adapter
-  (`internal/adapter/in/grpc/user_grpc_server_gen.go`) implementing the
-  real protoc-gen-go-grpc server interface
+  (`internal/infrastructure/transport/grpc/user_grpc_server_gen.go`)
+  implementing the real protoc-gen-go-grpc server interface
 - A default in-memory repository
-  (`internal/adapter/out/persistence/memory/user_repository_gen.go`) —
-  always generated, so the service is runnable even with no persistence
-  engine selected
+  (`internal/infrastructure/persistence/memory/user_repository_gen.go`)
+  — always generated, so the service is runnable even with no
+  persistence engine selected
 - If `sgo.yaml` selects a persistence engine (`--db` at `sgo init`): the
   real repository adapter for it —
-  `internal/adapter/out/persistence/<engine>/user_repository_gen.go` +
-  `conn_gen.go`. Postgres/MySQL support both `orm` (GORM) and
+  `internal/infrastructure/persistence/<engine>/user_repository_gen.go`
+  + `conn_gen.go`. Postgres/MySQL support both `orm` (GORM) and
   `self-managed` (hand-written SQL) modes, per `--persistence-mode`;
   MongoDB uses the official driver (no mode split). IDs are
   `google/uuid`-generated on every engine. `AutoMigrate` runs at startup
   so a fresh, empty database works without a separate migration step.
 - If `sgo.yaml` selects `redis`/`elasticsearch` (`--cache`/`--search` at
   `sgo init`): the `Cache`/`Search` ports
-  (`internal/core/port/out/cache.go`/`search.go`) and their adapters
+  (`internal/core/port/out/cache.go`/`search.go` — intentionally still
+  here, out of the DDD layers' scope) and their adapters
   (`internal/adapter/out/cache/redis/`,
   `internal/adapter/out/search/elasticsearch/`). Connected in
   `wire_gen.go` if selected, but **not** auto-wired into any service —
   add one as a parameter to `New<Entity>Service` yourself
-  (`internal/core/service`) if you want to use it.
-- `internal/bootstrap/wire_gen.go` — regenerated to wire *every* service
-  on record (not just this one) to whichever repository is active (the
-  real adapter if one is selected, otherwise in-memory) and starts both
-  servers: HTTP on `:8080`, gRPC on `:9090`
+  (`internal/application/user/service.go`) if you want to use it.
+- `internal/infrastructure/bootstrap/wire_gen.go` — regenerated to wire
+  *every* service on record (not just this one) to whichever repository
+  is active (the real adapter if one is selected, otherwise in-memory)
+  and a shared no-op `EventPublisher`, and starts both servers: HTTP on
+  `:8080`, gRPC on `:9090`
 
 ...and **creates, but never overwrites**, the owned files:
-`internal/core/domain/user/user.go`,
-`internal/core/service/user_service.go`. If the usecase port gained
-methods since the last run, stubs are appended to the owned service file
-instead of the whole file being rewritten; if it lost one that was
-already implemented, that implementation is left in place with a warning
-comment, never deleted — see ARCHITECTURE §6. Safe to run repeatedly:
-covered by an end-to-end Ginkgo suite that edits the proto and asserts a
-hand-written method body survives, twice, with a real `go build` after
-each run, plus a separate suite that builds and runs the actual compiled
-binary and drives a full HTTP CRUD cycle against it over real sockets.
+`internal/domain/user/aggregate.go`,
+`internal/application/user/service.go`. If the application service
+gained methods since the last run (a new RPC), stubs are appended to the
+owned service file instead of the whole file being rewritten; if it lost
+one that was already implemented, that implementation is left in place
+with a warning comment, never deleted — see ARCHITECTURE §6/§17. Safe to
+run repeatedly: covered by an end-to-end Ginkgo suite that edits the
+proto and asserts a hand-written method body survives, twice, with a
+real `go build` after each run, plus a separate suite that builds and
+runs the actual compiled binary and drives a full HTTP CRUD cycle
+against it over real sockets.
 
 Finishes by running `go mod tidy` in the project, so the
 `google.golang.org/protobuf`/`google.golang.org/grpc` dependencies

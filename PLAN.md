@@ -499,7 +499,7 @@ not proper".
 wizard group render at the same horizontal position, verified against a
 real pty capture, with a spec catching a regression.
 
-## Phase 12 — Replace the generated architecture with DDD tactical patterns **(planned)**
+## Phase 12 — Replace the generated architecture with DDD tactical patterns **(mostly done — shared kernel and GORM value-object embedding deferred, see Exit criteria)**
 
 **By far the largest, riskiest phase in this plan — larger than
 everything else in this batch combined.** Redefined from an earlier,
@@ -540,7 +540,7 @@ bring later.
 
 ### Vendored proto options + validation (the foundation everything else needs)
 
-- [ ] **`sgo/options.proto`** (vendored, `go:embed`, pure-Go compiler
+- [x] **`sgo/options.proto`** (vendored, `go:embed`, pure-Go compiler
       resolves it — no `protoc`/`buf` binary, same property Decision #5
       already established): `MessageOptions` extensions
       `(sgo.aggregate_root)`, `(sgo.value_object)`, `(sgo.domain_event)`;
@@ -551,7 +551,7 @@ bring later.
       `(sgo.hide_route)`) add fields to this same file rather than each
       vendoring their own, and are resequenced after this phase so they
       can (see Sequencing notes).
-- [ ] **Vendor `buf/validate/validate.proto`** (protovalidate — the
+- [x] **Vendor `buf/validate/validate.proto`** (protovalidate — the
       modern, widely-adopted successor to `protoc-gen-validate`; CEL-
       expression field/message constraints, e.g.
       `option (buf.validate.field).string.min_len = 1;`) the same way,
@@ -563,7 +563,7 @@ bring later.
 
 ### Domain layer (`internal/domain/`)
 
-- [ ] **Role inference**: within one proto file, the message marked
+- [x] **Role inference**: within one proto file, the message marked
       `(sgo.aggregate_root)` (or matching the entity name by the
       existing convention, if none is explicitly marked) is the
       Aggregate Root; a message marked `(sgo.value_object)` generates an
@@ -571,23 +571,23 @@ bring later.
       marked `(sgo.domain_event)` generates a plain event struct in
       `events.go`; anything else referenced by the aggregate becomes a
       child Entity within it.
-- [ ] **Generated sibling** (`<context>/<context>_gen.go`, same
+- [x] **Generated sibling** (`<context>/<context>_gen.go`, same
       generated/owned split principle as today, Decision #3): the flat
       field struct (as today), plus new scaffolding — an internal
       `events []DomainEvent` slice, a `PullEvents() []DomainEvent`
       method, and a `Validate() error` method wired to protovalidate
       against whatever `buf.validate` constraints the message declares.
-- [ ] **Owned `aggregate.go`**, same contract as today's owned
+- [x] **Owned `aggregate.go`**, same contract as today's owned
       `<entity>.go` (created once, never overwritten): this is where
       real business methods and invariant-triggered event appends
       actually get hand-written — sgo scaffolds the *mechanism*
       (validation, event collection), not arbitrary business rules it
       has no way to know.
-- [ ] **`domain/<context>/repository.go`** — same port role as today's
+- [x] **`domain/<context>/repository.go`** — same port role as today's
       repository port (and still open to Phase 16's
       `(sgo.repository_query)` extension), now typed against the
       aggregate root instead of a flat struct.
-- [ ] **`domain/<context>/errors.go`** — sentinel errors, same as
+- [x] **`domain/<context>/errors.go`** — sentinel errors, same as
       today's port-level errors, relocated/renamed to match.
 - [ ] **Shared kernel** (`domain/shared/`): a value-object message
       declared under `contract/pb/shared/*.proto` and `import`-ed by
@@ -603,7 +603,7 @@ bring later.
 
 ### Application layer (`internal/application/`) — CQRS
 
-- [ ] **`application/<context>/{command,query}.go`** — an RPC's request
+- [x] **`application/<context>/{command,query}.go`** — an RPC's request
       message becomes a `<Rpc>Command` or `<Rpc>Query` DTO, classified
       by the same naming convention HTTP routing already uses
       (`Create`/`Update`/`Delete` → command, `Get`/`List` → query),
@@ -611,7 +611,7 @@ bring later.
       that doesn't fit — the same "convention with an explicit override"
       shape Phase 15/16's options already use, kept consistent rather
       than inventing a third pattern.
-- [ ] **`application/<context>/service.go`** — replaces today's
+- [x] **`application/<context>/service.go`** — replaces today's
       `<entity>_service.go`; same owned-file, stub-appended-per-new-
       command/query contract (Decision #12), but now actually
       orchestrates: load the aggregate via the repository → call its
@@ -621,7 +621,7 @@ bring later.
       behavioral upgrade over today's service, which calls the
       repository directly with no aggregate/invariant/event step at
       all.
-- [ ] **`application/ports/event_publisher.go`** — the seam the future
+- [x] **`application/ports/event_publisher.go`** — the seam the future
       messaging phase plugs into:
       ```go
       type EventPublisher interface {
@@ -637,62 +637,93 @@ bring later.
 
 ### Infrastructure layer (`internal/infrastructure/`)
 
-- [ ] **`infrastructure/persistence/<engine>/`** — same generated
+- [x] **`infrastructure/persistence/<engine>/`** — same generated
       repository adapters as today (Postgres/MySQL/MongoDB/memory),
       relocated, now implementing the aggregate-aware repository
       interface. For SQL/GORM mode, a value object (e.g. `Money`) maps
       via GORM's native embedded-struct support (`gorm:"embedded"`),
       not a new mapping mechanism.
-- [ ] **`infrastructure/transport/{http,grpc}/`** — same HTTP/gRPC
+- [x] **`infrastructure/transport/{http,grpc}/`** — same HTTP/gRPC
       adapters as today, relocated; still map wire proto messages to
       Command/Query DTOs and call the application service, same shape
       as before under new names.
-- [ ] **`infrastructure/bootstrap/wire_gen.go`** — same composition-root
+- [x] **`infrastructure/bootstrap/wire_gen.go`** — same composition-root
       role as today's `internal/bootstrap/wire_gen.go`, relocated under
       `infrastructure/` to fit the new three-layer top level; now also
       wires the no-op `EventPublisher`.
-- [ ] **No `infrastructure/clients/`** in v1 — the reference structure's
+- [x] **No `infrastructure/clients/`** in v1 — the reference structure's
       outbound-API-client convention (its `Stripe` example) has nothing
       concrete behind it in sgo today; an empty placeholder directory
       isn't generated for the same reason `messaging/` isn't.
-- [ ] **`internal/adapter/mapper/`** → relocated under
-      `infrastructure/persistence/<engine>/mapper.go` per adapter
-      package (matching the reference structure's placement), rather
-      than one shared `mapper/` package — each engine's mapping concerns
-      (SQL columns vs. Mongo documents) are already engine-specific.
+- [x] **`internal/adapter/mapper/`** → relocated, but to
+      `infrastructure/transport/<entity>_mapper_gen.go` (one shared
+      package, entity-prefixed files — the pre-Phase-12 `mapper/`
+      package's own convention), **not** to a `mapper.go` per
+      persistence engine as originally planned here. The old mapper's
+      only real caller was the gRPC adapter's wire↔domain conversion,
+      never persistence — sqlgen/mongogen/memgen already map straight
+      between the domain aggregate and their own engine-specific
+      row/document model inline in their own templates, no shared
+      mapper package involved on the persistence side at all. Placing
+      it under `persistence/<engine>/` would have been placing it next
+      to the one adapter family that doesn't use it. `GenerateInfraMapper`
+      also grew a wire↔application direction (`<Msg>ToApp`, for the
+      gRPC adapter's own request-side mapping), which this plan didn't
+      anticipate — the HTTP adapter needs no such conversion, since it
+      binds JSON straight into the application DTO.
 
 ### Everything downstream
 
-- [ ] `cmd/<name>/main.go` unchanged in role (owned, thin, calls
+- [x] `cmd/<name>/main.go` unchanged in role (owned, thin, calls
       `infrastructure/bootstrap`) — the reference structure's own
       comment agrees ("Wire dependencies & boot adapters").
-- [ ] Update every path/shape mentioned in ARCHITECTURE.md §3/§5/§8,
-      docs/CLI.md, and the e2e specs' own path/content assertions —
-      this phase changes far more of them than the original
-      layout-only version would have.
+- [x] Updated docs/CLI.md, README.md, and every e2e spec's path/content
+      assertion across `internal/codegen` and `internal/commands`
+      (including the real running-server HTTP test and the real
+      compiled-binary CLI e2e test) to the new layout — all green.
+      ARCHITECTURE.md §3 (the directory tree), §2 (the "hexagonal core"
+      overview bullet), and §4 (the workflow's generator list) are
+      updated; §5/§8's prose wasn't fully re-audited line by line — real
+      remaining doc-drift risk, not verified clean.
 - [ ] Ginkgo specs, by sub-area above: role inference (aggregate root /
       value object / domain event classification, including the
-      convention fallback when nothing's explicitly marked);
+      convention fallback when nothing's explicitly marked) — **done**;
       protovalidate wiring (a violated constraint actually fails
       `Validate()`, generated against a real vendored constraint, not a
-      hand-rolled check); event collection (`PullEvents` actually
-      returns what an owned aggregate method appended, and is called by
-      the generated application service); the shared-kernel dedup case
-      (two entities referencing the same shared value object produce
-      identical generated output, not a conflict); GORM embedded-value-
-      object round-tripping against a real local Postgres, same standard
-      the existing persistence suites already hold adapters to; a full
-      CLI e2e spec through the new layout end to end.
+      hand-rolled check) — **done**, both in isolation and through a
+      real `go run` exercising acceptance/rejection; event collection
+      (`PullEvents` actually returns what an owned aggregate method
+      appended, and is called by the generated application service) —
+      **not done**: nothing in this batch's specs calls an owned
+      aggregate method that appends an event and asserts `PullEvents`
+      sees it, or that the application service pulls and publishes them
+      — the mechanism (the `events []DomainEvent` slice + `PullEvents`)
+      is generated and compiles, but its actual use is unexercised; the
+      shared-kernel dedup case — **not done**, the shared kernel itself
+      is deferred (see below); GORM embedded-value-object round-tripping
+      against a real local Postgres, same standard
+      the existing persistence suites already hold adapters to — **not
+      done**: sqlgen still maps every field as its own flat column, the
+      same as before this phase; it was never changed to give a value
+      object GORM's native embedded-struct treatment, so there's nothing
+      here for a spec to exercise yet; a full CLI e2e spec through the
+      new layout end to end — **done** (`internal/commands/e2e_test.go`).
 
 **Exit criteria:** a freshly generated project has the
-`domain/application/infrastructure` layout above; an aggregate's
-generated `Validate()` actually rejects data violating a real
-`buf.validate` constraint; a hand-written aggregate method's appended
-event is retrievable via `PullEvents()` and reaches the no-op
-`EventPublisher`; a shared value object referenced by two entities
-generates once, not twice; the full e2e suite (init → generate proto →
-hand edit → generate code → `go build`) passes against the new
-architecture end to end.
+`domain/application/infrastructure` layout above — **met**; an
+aggregate's generated `Validate()` actually rejects data violating a
+real `buf.validate` constraint — **met**, exercised through a real
+`go run`, not just a content assertion; a hand-written aggregate
+method's appended event is retrievable via `PullEvents()` and reaches
+the no-op `EventPublisher` — **not met**: the mechanism is generated and
+compiles, but nothing exercises an owned method actually appending an
+event and the application service actually publishing it; a shared
+value object referenced by two entities generates once, not twice —
+**not met**, the shared kernel is deferred (task tracked separately,
+unchanged from the earlier explicit `AskUserQuestion` deferral this
+phase's intro already notes); the full e2e suite (init → generate proto
+→ hand edit → generate code → `go build`) passes against the new
+architecture end to end — **met**.
 
 **Known, documented limitation carried over unchanged:** this
 architecture is chosen once, at `sgo init` time (there's no reason to

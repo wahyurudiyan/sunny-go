@@ -1,8 +1,9 @@
 # sunny-go
 
 `sgo` is an open-source CLI that bootstraps and evolves a Go service from
-a `.proto` contract, serving both HTTP and gRPC from a hexagonal
-(ports & adapters) core.
+a `.proto` contract, serving both HTTP and gRPC from a DDD-layered
+domain/application/infrastructure core (aggregates, value objects, and
+domain events with real invariant enforcement, not just flat structs).
 
 > **Status:** in active development. `sgo init`, `sgo generate
 > {proto,code,openapi}`, `sgo openapi validate`, `sgo list services`, and
@@ -14,11 +15,14 @@ a `.proto` contract, serving both HTTP and gRPC from a hexagonal
 > instead of the terminal, calling the identical
 > `internal/codegen`/`internal/config` functions the CLI does. See
 > `docs/CLI.md` for exactly what's implemented, and `PLAN.md` for what's
-> left (just polish at this point).
+> left (the DDD architecture above just landed; endpoint listing, an
+> OpenAPI viewer UI, `google.api.http`-style routing, and a wiki-style
+> guide are next).
 
-- **`ARCHITECTURE.md`** — the target architecture: hexagonal layout,
-  generated-vs-owned file strategy, pluggable HTTP frameworks and
-  datastores, `sgo init`/`sgo ui` design.
+- **`ARCHITECTURE.md`** — the target architecture: the DDD
+  domain/application/infrastructure layout, generated-vs-owned file
+  strategy, pluggable HTTP frameworks and datastores, `sgo init`/`sgo ui`
+  design.
 - **`PLAN.md`** — phased delivery plan for getting there.
 - **`docs/CLI.md`** — command reference (implemented and planned).
 - **`CHANGELOG.md`** — release history (`sgo --version`).
@@ -48,13 +52,13 @@ cd myservice
 sgo generate proto user
 # edit contract/pb/user.proto
 sgo generate code user
-# implement business logic in internal/core/service/user_service.go
+# implement business logic in internal/application/user/service.go
 ```
 
 Running `sgo generate code user` again after editing the proto further
-regenerates everything derived from it (types, ports, the mapper, HTTP
-routes, the gRPC server) without touching what you wrote into
-`user_service.go`. `go run ./cmd/myservice` then serves HTTP on `:8080`
+regenerates everything derived from it (the aggregate, ports, the
+mapper, HTTP routes, the gRPC server) without touching what you wrote
+into `service.go`. `go run ./cmd/myservice` then serves HTTP on `:8080`
 and gRPC on `:9090`, both backed by the same service instance.
 
 ## What `sgo` generates
@@ -62,8 +66,13 @@ and gRPC on `:9090`, both backed by the same service instance.
 - A proto-first contract under `contract/pb/`, compiled with a pure-Go
   compiler (no `protoc`/`buf` install required) into `contract/gen/` via
   the real `protoc-gen-go`/`protoc-gen-go-grpc` plugins.
-- A hexagonal core (`internal/core`) with domain entities, ports, and
-  use-case services — framework- and datastore-agnostic.
+- A domain layer (`internal/domain`) — the Aggregate Root, its Value
+  Objects and Domain Events, and its repository port — and an
+  application layer (`internal/application`) of CQRS command/query DTOs
+  and an application service, both framework- and datastore-agnostic.
+  Invariants declared in the proto (`(buf.validate.field)`) are enforced
+  for real, via `buf.build/go/protovalidate`, at the wire↔domain
+  boundary — see `ARCHITECTURE.md` §17.
 - Pluggable HTTP adapters (Gin, Echo, or Chi) and a gRPC adapter, both
   backed by the same service implementation. Routes are derived from RPC
   naming (`Create`/`Get`/`List`/`Update`/`Delete`), not `google.api.http`

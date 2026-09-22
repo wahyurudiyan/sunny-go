@@ -7,31 +7,48 @@ import (
 
 	"google.golang.org/grpc"
 
-	in "{{.PortInImportPath}}"
+	app "{{.ApplicationImportPath}}"
 	mapper "{{.MapperImportPath}}"
 	wire "{{.WireImportPath}}"
 )
 
 type {{.EntityLower}}ServiceServer struct {
 	wire.Unimplemented{{.Entity}}ServiceServer
-	svc in.{{.Entity}}UseCase
+	svc *app.{{.Entity}}Service
 }
 
 // Register{{.Entity}}ServiceServer registers svc as the gRPC handler for
 // {{.Entity}}Service.
-func Register{{.Entity}}ServiceServer(s grpc.ServiceRegistrar, svc in.{{.Entity}}UseCase) {
+func Register{{.Entity}}ServiceServer(s grpc.ServiceRegistrar, svc *app.{{.Entity}}Service) {
 	wire.Register{{.Entity}}ServiceServer(s, &{{.EntityLower}}ServiceServer{svc: svc})
 }
 {{$root := .}}
 {{range .Methods}}
 func (h *{{$root.EntityLower}}ServiceServer) {{.Name}}(ctx context.Context, req *wire.{{.Input}}) (*wire.{{.Output}}, error) {
-	domainReq := mapper.{{.Input}}ToDomain(req)
-
-	resp, err := h.svc.{{.Name}}(ctx, domainReq)
+	appReq, err := mapper.{{.Input}}ToApp(req)
 	if err != nil {
 		return nil, err
 	}
 
-	return mapper.{{.Output}}FromDomain(resp), nil
+{{- if eq .Resp.Kind "delete"}}
+	if err := h.svc.{{.Name}}(ctx, appReq); err != nil {
+		return nil, err
+	}
+	return &wire.{{.Output}}{ {{if .Resp.SuccessFieldGoName}}{{.Resp.SuccessFieldGoName}}: true{{end}} }, nil
+{{- else}}
+	resp, err := h.svc.{{.Name}}(ctx, appReq)
+	if err != nil {
+		return nil, err
+	}
+{{- if eq .Resp.Kind "list"}}
+	items := make([]*wire.{{$root.Entity}}, len(resp))
+	for i, v := range resp {
+		items[i] = mapper.{{$root.Entity}}FromDomain(v)
+	}
+	return &wire.{{.Output}}{ {{.Resp.FieldGoName}}: items{{if .Resp.TotalFieldGoName}}, {{.Resp.TotalFieldGoName}}: int32(len(items)){{end}} }, nil
+{{- else}}
+	return &wire.{{.Output}}{ {{.Resp.FieldGoName}}: mapper.{{$root.Entity}}FromDomain(resp) }, nil
+{{- end}}
+{{- end}}
 }
 {{end}}

@@ -1,20 +1,22 @@
-// Package bootstrap generates internal/bootstrap/wire_gen.go, the
-// composition root that wires every generated service to a repository
-// (the real adapter sgo.yaml's persistence selection names, falling
-// back to the in-memory default — see ARCHITECTURE.md Decision #15) and
-// starts both the HTTP (httpgen) and gRPC (grpcgen) servers. It's
-// regenerated on every `sgo generate code` run so it always reflects the
-// full current set of services and the project's current selections —
-// not just the one entity just generated.
+// Package bootstrap generates
+// internal/infrastructure/bootstrap/wire_gen.go, the composition root
+// that wires every generated service — repository, a shared no-op
+// EventPublisher, and the application service itself
+// (ARCHITECTURE.md §17) — to the repository adapter sgo.yaml's
+// persistence selection names (falling back to the in-memory default —
+// Decision #15), and starts both the HTTP (httpgen) and gRPC (grpcgen)
+// servers. It's regenerated on every `sgo generate code` run so it
+// always reflects the full current set of services and the project's
+// current selections — not just the one entity just generated.
 package bootstrap
 
 import (
 	"embed"
-	"path"
 	"path/filepath"
 	"strings"
 
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/cachegen"
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/core"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/gengo"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/grpcgen"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/httpgen"
@@ -35,28 +37,34 @@ var engineFields = map[config.HTTPFramework]string{
 }
 
 type entityData struct {
-	Lower string
-	Title string
+	Lower                 string
+	Title                 string
+	ApplicationImportPath string
 }
 
-// Generate writes internal/bootstrap/wire_gen.go, wiring every service
-// in cfg.Services to the repository adapter cfg.Persistence names (or
-// the in-memory default if none is selected), plus a cache/search client
-// if cfg.Cache/cfg.Search name one — see ARCHITECTURE.md §8.2/§8.3.
+// Generate writes internal/infrastructure/bootstrap/wire_gen.go, wiring
+// every service in cfg.Services to the repository adapter
+// cfg.Persistence names (or the in-memory default if none is selected)
+// and a shared no-op EventPublisher, plus a cache/search client if
+// cfg.Cache/cfg.Search name one — see ARCHITECTURE.md §8.2/§8.3/§17.
 func Generate(cfg *config.Config, destDir string) error {
 	entities := make([]entityData, 0, len(cfg.Services))
 	for _, s := range cfg.Services {
-		entities = append(entities, entityData{Lower: s, Title: entityTitle(s)})
+		entities = append(entities, entityData{
+			Lower:                 s,
+			Title:                 entityTitle(s),
+			ApplicationImportPath: core.Paths{Module: cfg.Module, Entity: s}.ApplicationImportPath(),
+		})
 	}
 
 	persistence := resolvePersistence(cfg)
 
 	data := struct {
-		HTTPImportPath    string
-		GRPCImportPath    string
-		ServiceImportPath string
-		EngineField       string
-		Entities          []entityData
+		HTTPImportPath       string
+		GRPCImportPath       string
+		ApplicationPortsPath string
+		EngineField          string
+		Entities             []entityData
 
 		RepoPackage    string
 		RepoImportPath string
@@ -70,11 +78,11 @@ func Generate(cfg *config.Config, destDir string) error {
 		UsesSearch       bool
 		SearchImportPath string
 	}{
-		HTTPImportPath:    httpgen.ImportPath(cfg.Module, cfg.HTTPFramework),
-		GRPCImportPath:    grpcgen.ImportPath(cfg.Module),
-		ServiceImportPath: ServiceImportPath(cfg.Module),
-		EngineField:       engineFields[cfg.HTTPFramework],
-		Entities:          entities,
+		HTTPImportPath:       httpgen.ImportPath(cfg.Module, cfg.HTTPFramework),
+		GRPCImportPath:       grpcgen.ImportPath(cfg.Module),
+		ApplicationPortsPath: core.Paths{Module: cfg.Module}.ApplicationPortsImportPath(),
+		EngineField:          engineFields[cfg.HTTPFramework],
+		Entities:             entities,
 
 		RepoPackage:    persistence.pkg,
 		RepoImportPath: persistence.importPath,
@@ -149,13 +157,6 @@ func hasEngine[T comparable](engines []T, want T) bool {
 		}
 	}
 	return false
-}
-
-// ServiceImportPath is where every entity's service implementation
-// lives (they share one Go package — see internal/codegen/core), e.g.
-// "<module>/internal/core/service".
-func ServiceImportPath(module string) string {
-	return path.Join(module, "internal/core/service")
 }
 
 func entityTitle(name string) string {

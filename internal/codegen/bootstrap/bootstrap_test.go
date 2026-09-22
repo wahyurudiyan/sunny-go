@@ -32,7 +32,7 @@ var _ = Describe("Generate", func() {
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(os.RemoveAll(root)).To(Succeed()) })
 
-		destDir = filepath.Join(root, "internal", "bootstrap")
+		destDir = filepath.Join(root, "internal", "infrastructure", "bootstrap")
 	})
 
 	Context("with no services yet (fresh `sgo init`)", func() {
@@ -60,12 +60,13 @@ var _ = Describe("Generate", func() {
 			content, err := os.ReadFile(filepath.Join(destDir, "wire_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
 
-			for _, entity := range []string{"User", "Order"} {
-				Expect(string(content)).To(ContainSubstring("memory.New" + entity + "Repository()"))
-				Expect(string(content)).To(ContainSubstring("service.New" + entity + "Service("))
-				Expect(string(content)).To(ContainSubstring("httpadapter.Register" + entity + "Routes("))
-				Expect(string(content)).To(ContainSubstring("grpcadapter.Register" + entity + "ServiceServer("))
+			for _, entity := range []struct{ Title, Lower string }{{"User", "user"}, {"Order", "order"}} {
+				Expect(string(content)).To(ContainSubstring("memory.New" + entity.Title + "Repository()"))
+				Expect(string(content)).To(ContainSubstring(entity.Lower + "app.New" + entity.Title + "Service("))
+				Expect(string(content)).To(ContainSubstring("httpadapter.Register" + entity.Title + "Routes("))
+				Expect(string(content)).To(ContainSubstring("grpcadapter.Register" + entity.Title + "ServiceServer("))
 			}
+			Expect(string(content)).To(ContainSubstring("publisher := ports.NoopEventPublisher{}"))
 
 			assertValidGo(filepath.Join(destDir, "wire_gen.go"))
 		})
@@ -81,7 +82,7 @@ var _ = Describe("Generate", func() {
 			content, err := os.ReadFile(filepath.Join(destDir, "wire_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(string(content)).To(ContainSubstring(`postgres "demo/internal/adapter/out/persistence/postgres"`))
+			Expect(string(content)).To(ContainSubstring(`postgres "demo/internal/infrastructure/persistence/postgres"`))
 			Expect(string(content)).To(ContainSubstring("db, err := postgres.Connect()"))
 			Expect(string(content)).To(ContainSubstring("postgres.AutoMigrate(db)"))
 			Expect(string(content)).To(ContainSubstring("postgres.NewUserRepository(db)"))
@@ -138,7 +139,7 @@ var _ = Describe("Generate", func() {
 			Expect(string(content)).To(ContainSubstring("cacheadapter.Connect(ctx)"))
 			Expect(string(content)).To(ContainSubstring(`searchadapter "demo/internal/adapter/out/search/elasticsearch"`))
 			Expect(string(content)).To(ContainSubstring("searchadapter.Connect()"))
-			Expect(string(content)).NotTo(ContainSubstring("service.NewUserService(cache"), "cache/search must not appear in the service constructor call")
+			Expect(string(content)).NotTo(ContainSubstring("userapp.NewUserService(cache"), "cache/search must not appear in the service constructor call")
 
 			assertValidGo(filepath.Join(destDir, "wire_gen.go"))
 		})

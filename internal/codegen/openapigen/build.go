@@ -54,7 +54,11 @@ func Build(cfg *config.Config, projectDir string) (*Document, error) {
 			return nil, err
 		}
 
-		for _, r := range httpgen.BuildRoutes(file, name) {
+		routes, err := httpgen.BuildRoutes(fd, file, name)
+		if err != nil {
+			return nil, fmt.Errorf("openapigen: deriving routes for %s: %w", name, err)
+		}
+		for _, r := range routes {
 			if err := addRoute(doc, r, name); err != nil {
 				return nil, err
 			}
@@ -143,10 +147,10 @@ func floatPtr(f float64) *float64 { return &f }
 // failure is 400 (only when the route has a body), any service error is
 // 500, and success is always 200 with the RPC's output message.
 func addRoute(doc *Document, r httpgen.Route, entity string) error {
-	path := r.BasePath
-	if r.HasID {
-		path += "/{id}"
-	}
+	// r.PathTemplate already uses "{name}" syntax — the same convention
+	// OpenAPI's own path templates use, so it needs no translation here
+	// (unlike FullPath, which translates it per HTTP framework).
+	path := r.PathTemplate
 
 	item, ok := doc.Paths[path]
 	if !ok {
@@ -168,9 +172,9 @@ func addRoute(doc *Document, r httpgen.Route, entity string) error {
 		},
 	}
 
-	if r.HasID {
+	for _, p := range r.PathParams {
 		op.Parameters = append(op.Parameters, Parameter{
-			Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"},
+			Name: p.Name, In: "path", Required: true, Schema: &Schema{Type: "string"},
 		})
 	}
 

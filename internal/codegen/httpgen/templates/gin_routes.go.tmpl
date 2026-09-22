@@ -7,29 +7,44 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	{{.DomainPkg}} "{{.DomainImportPath}}"
-	in "{{.PortInImportPath}}"
+	app "{{.ApplicationImportPath}}"
 )
 
-func Register{{.Entity}}Routes(engine *gin.Engine, svc in.{{.Entity}}UseCase) {
+func Register{{.Entity}}Routes(engine *gin.Engine, svc *app.{{.Entity}}Service) {
 {{range .Routes}}
 	engine.{{.Verb}}("{{.Path}}", func(c *gin.Context) {
-		var req {{$.DomainPkg}}.{{.Input}}
+		var req app.{{.Input}}
 {{- if .HasBody}}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 {{- end}}
-{{- if .HasID}}
-		req.Id = c.Param("id")
+{{- range .PathParams}}
+		req.{{.GoName}} = c.Param("{{.URLName}}")
 {{- end}}
+{{- if eq .RespKind "delete"}}
+		if err := svc.{{.Name}}(c.Request.Context(), &req); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+{{- else}}
 		resp, err := svc.{{.Name}}(c.Request.Context(), &req)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, resp)
+{{- if eq .RespKind "list"}}
+{{- if .RespTotalField}}
+		c.JSON(http.StatusOK, gin.H{"{{.RespField}}": resp, "{{.RespTotalField}}": len(resp)})
+{{- else}}
+		c.JSON(http.StatusOK, gin.H{"{{.RespField}}": resp})
+{{- end}}
+{{- else}}
+		c.JSON(http.StatusOK, gin.H{"{{.RespField}}": resp})
+{{- end}}
+{{- end}}
 	})
 {{end}}
 }

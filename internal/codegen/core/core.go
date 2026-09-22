@@ -92,24 +92,45 @@ type Paths struct {
 	Entity string // lowercase entity/service name, e.g. "user"
 }
 
-func (p Paths) DomainImportPath() string {
-	return path.Join(p.Module, "internal/core/domain", p.Entity)
-}
-
-func (p Paths) PortInImportPath() string {
-	return path.Join(p.Module, "internal/core/port/in")
-}
-
-func (p Paths) PortOutImportPath() string {
-	return path.Join(p.Module, "internal/core/port/out")
-}
-
 func (p Paths) WireImportPath() string {
 	return path.Join(p.Module, "contract/gen", p.Entity)
 }
 
-func (p Paths) MapperImportPath() string {
-	return path.Join(p.Module, "internal/adapter/mapper")
+// AggregateDomainImportPath is internal/domain/<entity> (ARCHITECTURE.md
+// §17): the Aggregate Root, its Value Objects, Domain Events, and its
+// repository port.
+func (p Paths) AggregateDomainImportPath() string {
+	return path.Join(p.Module, "internal/domain", p.Entity)
+}
+
+// EventImportPath is the shared internal/domain/event package
+// (ARCHITECTURE.md §17) every entity's domain events implement
+// DomainEvent through, so a single EventPublisher can accept events
+// from any of them.
+func (p Paths) EventImportPath() string {
+	return path.Join(p.Module, "internal/domain/event")
+}
+
+// ApplicationImportPath is internal/application/<entity> — the CQRS
+// command/query DTOs and application service (ARCHITECTURE.md §17).
+func (p Paths) ApplicationImportPath() string {
+	return path.Join(p.Module, "internal/application", p.Entity)
+}
+
+// ApplicationPortsImportPath is the shared internal/application/ports
+// package — EventPublisher and any other cross-entity application-layer
+// port.
+func (p Paths) ApplicationPortsImportPath() string {
+	return path.Join(p.Module, "internal/application/ports")
+}
+
+// TransportMapperImportPath is the shared internal/infrastructure/
+// transport package GenerateInfraMapper writes each entity's
+// <entity>_mapper_gen.go into (ARCHITECTURE.md §17) — one package for
+// every entity's wire conversions, like the pre-Phase-12
+// MapperImportPath it replaces.
+func (p Paths) TransportMapperImportPath() string {
+	return path.Join(p.Module, "internal/infrastructure/transport")
 }
 
 // entityTitle returns the exported (PascalCase-first-letter) form of an

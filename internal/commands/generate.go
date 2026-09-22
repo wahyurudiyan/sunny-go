@@ -58,16 +58,18 @@ Example:
 
 var generateCodeCmd = &cobra.Command{
 	Use:   "code <name>",
-	Short: "Generate the hexagonal core and wire types for <name>",
+	Short: "Generate the DDD domain/application/infrastructure layers and wire types for <name>",
 	Long: `Compile contract/pb/<name>.proto and (re)generate everything that
 derives from it: contract/gen (protoc-gen-go/protoc-gen-go-grpc output),
-the domain entity, the usecase/repository ports, the service skeleton,
-and the wire<->domain mapper.
+the domain aggregate and its repository port, the CQRS command/query
+DTOs and application service, the wire<->domain and wire<->application
+mappers, HTTP routes for the project's chosen framework, and the gRPC
+server adapter.
 
 Safe to run repeatedly: hand-written business logic in the owned files
-(internal/core/domain/<name>/<name>.go and
-internal/core/service/<name>_service.go) is created once and never
-overwritten — see ARCHITECTURE.md §6.
+(internal/domain/<name>/aggregate.go and
+internal/application/<name>/service.go) is created once and never
+overwritten — see ARCHITECTURE.md §6/§17.
 
 Example:
   sgo generate code user
@@ -91,11 +93,14 @@ Example:
 		}
 
 		fmt.Printf("✅ Generated code for %s\n\n", name)
-		fmt.Printf("   contract/gen/%s/             # wire types (generated, do not edit)\n", name)
-		fmt.Printf("   internal/core/domain/%s/     # domain entity\n", name)
-		fmt.Printf("   internal/core/port/          # usecase + repository interfaces\n")
-		fmt.Printf("   internal/core/service/       # service skeleton — implement it here\n")
-		fmt.Printf("   internal/adapter/mapper/     # wire<->domain mapper (generated)\n")
+		fmt.Printf("   contract/gen/%s/               # wire types (generated, do not edit)\n", name)
+		fmt.Printf("   internal/domain/%s/            # aggregate, value objects, domain events\n", name)
+		fmt.Printf("   internal/application/%s/       # CQRS command/query DTOs + service — implement it here\n", name)
+		fmt.Printf("   internal/infrastructure/       # transport (HTTP/gRPC), persistence, bootstrap\n")
+		fmt.Printf("\n📝 Next steps:\n")
+		fmt.Printf("   implement internal/application/%s/service.go\n", name)
+		fmt.Printf("   sgo list endpoints %s          # see the HTTP routes this service now serves\n", name)
+		fmt.Printf("   sgo generate openapi           # generate docs/openapi.yaml for every registered service\n")
 	},
 }
 

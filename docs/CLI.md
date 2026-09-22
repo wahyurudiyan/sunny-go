@@ -31,6 +31,8 @@ Flags (any one of these, if set, skips the wizard):
 | `--db` | comma list of `postgres`, `mysql`, `mongo` | none | |
 | `--cache` | comma list, currently only `redis` | none | |
 | `--search` | comma list, currently only `elasticsearch` | none | |
+| `--openapi-version` | `3.0`, `3.1` | `3.0` | consumed by `sgo generate openapi` below |
+| `--openapi-format` | `yaml`, `json` | `yaml` | consumed by `sgo generate openapi` below |
 
 There's no `--yes` flag — a non-TTY stdin already skips the wizard
 automatically, and any single selection flag signals "I want direct
@@ -63,57 +65,92 @@ Compiles `contract/pb/user.proto` (via a pure-Go compiler — no `buf`/
 - `contract/gen/user/*.pb.go`, `*_grpc.pb.go` — via the real
   `protoc-gen-go`/`protoc-gen-go-grpc` plugins, run with `go run
   <module>@<version>`
-- `internal/core/domain/user/user_gen.go` — a struct for every message in
-  the file
-- `internal/core/port/in/user_usecase.go` (mirrors the proto service's
-  RPCs), `internal/core/port/out/user_repository.go` (fixed
-  `Create/Get/List/Update/Delete` shape)
-- `internal/adapter/mapper/user_mapper_gen.go` — wire↔domain conversions
+- **Domain layer** (`internal/domain/user/`): `user_gen.go` — the
+  Aggregate Root (the message matching the entity name, or explicitly
+  marked `option (sgo.aggregate_root) = true;`), its Value Objects
+  (`option (sgo.value_object) = true;`) and Domain Events (`option
+  (sgo.domain_event) = true;`) — plus `repository.go` (the fixed
+  `Create/Get/List/Update/Delete` port, typed directly against the
+  aggregate, plus one method per RPC marked `option
+  (sgo.repository_query) = true;` — see ARCHITECTURE §21) and
+  `errors.go`. `internal/domain/event/event.go` — the shared
+  `DomainEvent` interface every entity's events implement, so one
+  `EventPublisher` can accept events from any of them
+- **Application layer** (`internal/application/user/`):
+  `command_gen.go`/`query_gen.go` — DTOs derived from each RPC's request
+  message, classified by naming convention (`Create/Update/Delete` →
+  command, `Get/List` → query, overridable with `(sgo.command)`/
+  `(sgo.query)`). `internal/application/ports/event_publisher.go` — the
+  shared `EventPublisher` interface and its no-op default
+- `internal/infrastructure/transport/user_mapper_gen.go` — wire↔domain
+  conversions, validated against any `(buf.validate.field)` constraints
+  the proto declares (real `buf.build/go/protovalidate`, not sgo
+  hand-rolling CEL evaluation) — plus wire↔application conversions for
+  the gRPC adapter's own request-side mapping
 - HTTP route registration for the project's `sgo.yaml`-selected framework
-  (`internal/adapter/in/http/<framework>/user_routes_gen.go` +
-  `server_gen.go`), with routes derived from the RPC naming convention
-  (`Create*`→`POST`, `Get*`→`GET .../{id}`, `List*`→`GET`,
-  `Update*`→`PUT .../{id}`, `Delete*`→`DELETE .../{id}` — no
-  `google.api.http` support yet, see ARCHITECTURE §8.1/§12)
+  (`internal/infrastructure/transport/http/<framework>/user_routes_gen.go`
+  + `server_gen.go`). An RPC carrying a `(google.api.http)` option uses
+  its declared method/path/body; one without falls back to the RPC
+  naming convention (`Create*`→`POST`, `Get*`→`GET .../{id}`,
+  `List*`→`GET`, `Update*`→`PUT .../{id}`, `Delete*`→`DELETE .../{id}` —
+  see ARCHITECTURE §8.1/§20). `option (sgo.base_path) = "/v1";` on the
+  service overrides the default `/api/v1` prefix for every route on it.
+  `option (sgo.hide_route) = true;` on an RPC skips HTTP route
+  registration for it entirely (its gRPC method, and its repository
+  counterpart if also marked `repository_query`, are unaffected — see
+  ARCHITECTURE §21).
 - A gRPC server adapter
-  (`internal/adapter/in/grpc/user_grpc_server_gen.go`) implementing the
-  real protoc-gen-go-grpc server interface
+  (`internal/infrastructure/transport/grpc/user_grpc_server_gen.go`)
+  implementing the real protoc-gen-go-grpc server interface
 - A default in-memory repository
-  (`internal/adapter/out/persistence/memory/user_repository_gen.go`) —
-  always generated, so the service is runnable even with no persistence
-  engine selected
+  (`internal/infrastructure/persistence/memory/user_repository_gen.go`)
+  — always generated, so the service is runnable even with no
+  persistence engine selected. Auto-implements a `repository_query`
+  method as a linear scan when it takes exactly one scalar parameter
+  matching a domain field by name (e.g. `FindByEmail(ctx, email
+  string)`); anything it can't confidently map gets a
+  `panic("sgo: TODO implement ...")` stub in an owned companion file
+  (`user_repository.go`, next to the generated one) instead.
 - If `sgo.yaml` selects a persistence engine (`--db` at `sgo init`): the
   real repository adapter for it —
-  `internal/adapter/out/persistence/<engine>/user_repository_gen.go` +
-  `conn_gen.go`. Postgres/MySQL support both `orm` (GORM) and
+  `internal/infrastructure/persistence/<engine>/user_repository_gen.go`
+  + `conn_gen.go`. Postgres/MySQL support both `orm` (GORM) and
   `self-managed` (hand-written SQL) modes, per `--persistence-mode`;
   MongoDB uses the official driver (no mode split). IDs are
   `google/uuid`-generated on every engine. `AutoMigrate` runs at startup
   so a fresh, empty database works without a separate migration step.
+  Every `repository_query` method gets a `panic("sgo: TODO implement
+  ...")` stub in the same kind of owned companion file the in-memory
+  adapter uses for what it can't auto-implement — a real engine's query
+  logic can never be auto-generated, since sgo has no way to know what
+  SQL/Mongo query a method like `FindByEmail` needs.
 - If `sgo.yaml` selects `redis`/`elasticsearch` (`--cache`/`--search` at
   `sgo init`): the `Cache`/`Search` ports
-  (`internal/core/port/out/cache.go`/`search.go`) and their adapters
+  (`internal/core/port/out/cache.go`/`search.go` — intentionally still
+  here, out of the DDD layers' scope) and their adapters
   (`internal/adapter/out/cache/redis/`,
   `internal/adapter/out/search/elasticsearch/`). Connected in
   `wire_gen.go` if selected, but **not** auto-wired into any service —
   add one as a parameter to `New<Entity>Service` yourself
-  (`internal/core/service`) if you want to use it.
-- `internal/bootstrap/wire_gen.go` — regenerated to wire *every* service
-  on record (not just this one) to whichever repository is active (the
-  real adapter if one is selected, otherwise in-memory) and starts both
-  servers: HTTP on `:8080`, gRPC on `:9090`
+  (`internal/application/user/service.go`) if you want to use it.
+- `internal/infrastructure/bootstrap/wire_gen.go` — regenerated to wire
+  *every* service on record (not just this one) to whichever repository
+  is active (the real adapter if one is selected, otherwise in-memory)
+  and a shared no-op `EventPublisher`, and starts both servers: HTTP on
+  `:8080`, gRPC on `:9090`
 
 ...and **creates, but never overwrites**, the owned files:
-`internal/core/domain/user/user.go`,
-`internal/core/service/user_service.go`. If the usecase port gained
-methods since the last run, stubs are appended to the owned service file
-instead of the whole file being rewritten; if it lost one that was
-already implemented, that implementation is left in place with a warning
-comment, never deleted — see ARCHITECTURE §6. Safe to run repeatedly:
-covered by an end-to-end Ginkgo suite that edits the proto and asserts a
-hand-written method body survives, twice, with a real `go build` after
-each run, plus a separate suite that builds and runs the actual compiled
-binary and drives a full HTTP CRUD cycle against it over real sockets.
+`internal/domain/user/aggregate.go`,
+`internal/application/user/service.go`. If the application service
+gained methods since the last run (a new RPC), stubs are appended to the
+owned service file instead of the whole file being rewritten; if it lost
+one that was already implemented, that implementation is left in place
+with a warning comment, never deleted — see ARCHITECTURE §6/§17. Safe to
+run repeatedly: covered by an end-to-end Ginkgo suite that edits the
+proto and asserts a hand-written method body survives, twice, with a
+real `go build` after each run, plus a separate suite that builds and
+runs the actual compiled binary and drives a full HTTP CRUD cycle
+against it over real sockets.
 
 Finishes by running `go mod tidy` in the project, so the
 `google.golang.org/protobuf`/`google.golang.org/grpc` dependencies
@@ -135,6 +172,33 @@ sgo list services
 Lists services tracked in `sgo.yaml` (populated by `sgo generate code`),
 and for each: proto present? `contract/gen` present? domain entity
 present? service implementation present?
+
+## `sgo list endpoints` ✅
+
+```
+sgo list endpoints [service]
+```
+
+Prints every HTTP route currently derived for the project's registered
+services (all of them with no argument, one with it): method, path, and
+the RPC it comes from — e.g.:
+
+```
+product:
+  POST   /api/v1/products               CreateProduct
+  GET    /api/v1/products/:id           GetProduct
+  GET    /api/v1/products               ListProducts
+  PUT    /api/v1/products/:id           UpdateProduct
+  DELETE /api/v1/products/:id           DeleteProduct
+```
+
+Reuses `internal/codegen/httpgen.BuildRoutes` directly — the exact same
+function the generated `*_routes_gen.go` registrations and `sgo generate
+openapi` (ARCHITECTURE.md §13) both already derive from, and the id-path
+placeholder syntax matches the project's selected HTTP framework
+(`:id` for Gin/Echo, `{id}` for Chi) — this prints what the generated
+adapter actually serves, not a second, independently-derived guess at
+it. See ARCHITECTURE.md §18.
 
 ## `sgo validate <proto-file>` — not yet implemented
 
@@ -237,6 +301,35 @@ concrete adapter yet), and whether it's writable. Editing a writable
 value there restarts the service with the new value in effect. Values
 are masked by default — a value is only ever sent to the browser once
 you click Reveal for that key.
+
+## `sgo openapi ui` ✅
+
+```
+sgo openapi ui [--port 4749]
+```
+
+Serves the current project's already-generated `docs/openapi.<ext>`
+through an embedded, offline [Redoc](https://github.com/Redocly/redoc)
+viewer at `http://127.0.0.1:<port>` (default `4749`) — a real
+interactive API reference (endpoints, request/response schemas, a
+"download spec" link), not raw YAML/JSON in a text editor.
+
+Errors clearly and doesn't start a server if `docs/openapi.<ext>`
+doesn't exist yet — run `sgo generate openapi` first, same contract
+`sgo openapi validate` already has. Reads the document fresh from disk
+on every request rather than caching it at startup, so re-running `sgo
+generate openapi` while the server is up and refreshing the browser
+picks up the change — no restart needed.
+
+Binds to `127.0.0.1` only; no auth, since it never listens on anything
+but loopback — same stance `sgo ui` already takes. The Redoc bundle
+itself is vendored (`go:embed`, ~1.1 MB) rather than loaded from a CDN,
+so the viewer works with no network access at all. See ARCHITECTURE.md
+§19.
+
+`sgo generate code` prints a reminder to run `sgo generate openapi`
+once it's generated a service, the same "next steps" pattern `sgo init`
+already uses for `sgo generate proto`.
 
 ## Removed/renamed from the current CLI
 

@@ -1,0 +1,79 @@
+// Custom proto options sgo's own generators read to drive DDD role
+// inference (ARCHITECTURE.md §17) — real proto extensions, not a
+// second hand-authored modeling file. Field numbers are in the
+// 50000-99999 organization-reserved range proto itself sets aside for
+// exactly this: an org's internal, non-`googleapis`-registered
+// extensions.
+//
+// Vendored as part of sgo itself (internal/codegen/proto/wellknown),
+// resolved by the pure-Go compiler the same way the vendored
+// protovalidate schema (buf/validate/validate.proto) is — no
+// `protoc`/`buf` binary or network access needed to compile a proto
+// file that imports "sgo/options.proto".
+syntax = "proto3";
+
+package sgo;
+
+import "google/protobuf/descriptor.proto";
+
+// Public (not internal/) on purpose: a generated project's own proto
+// files import "sgo/options.proto", and protoc-gen-go's output for
+// them blank-imports whatever package this option names, to register
+// the extensions with the global proto registry (the same reason
+// buf/validate/validate.proto's own go_package — a real, publicly
+// resolvable module — already works from outside this repo). An
+// internal/ path here would make every generated project that uses
+// these options fail to build, since Go's own internal-package
+// visibility rule forbids importing an internal/ package from outside
+// its own module tree — caught by a real go build in this repo's own
+// test suite, not assumed.
+option go_package = "github.com/wahyurudiyan/sunny-go/pkg/sgoproto";
+
+extend google.protobuf.MessageOptions {
+  // aggregate_root marks this message as a bounded context's Aggregate
+  // Root. At most one per proto file; if none is marked, sgo falls
+  // back to the message matching the file's entity name (the
+  // convention already used for HTTP route derivation, §8.1).
+  bool aggregate_root = 50001;
+
+  // value_object marks this message as an immutable Value Object:
+  // sgo generates it with no setters and a constructor that validates
+  // any protovalidate constraints its fields declare.
+  bool value_object = 50002;
+
+  // domain_event marks this message as a Domain Event — sgo generates
+  // a plain event struct for it in the aggregate's events.go.
+  bool domain_event = 50003;
+}
+
+extend google.protobuf.MethodOptions {
+  // command marks this RPC as a CQRS command (state-changing),
+  // overriding the naming-convention default (Create/Update/Delete)
+  // for an RPC that doesn't fit it.
+  bool command = 50001;
+
+  // query marks this RPC as a CQRS query (read-only), overriding the
+  // naming-convention default (Get/List) for an RPC that doesn't fit
+  // it.
+  bool query = 50002;
+
+  // repository_query marks this RPC as also needing a counterpart on
+  // the aggregate repository port (ARCHITECTURE.md §21), generated
+  // alongside its usual usecase-port method, HTTP route, and gRPC
+  // method — not a repository-only declaration.
+  bool repository_query = 50003;
+
+  // hide_route independently skips HTTP route registration for this
+  // RPC (ARCHITECTURE.md §21). Its gRPC method, and its repository
+  // counterpart if also marked repository_query, are unaffected.
+  bool hide_route = 50004;
+}
+
+extend google.protobuf.ServiceOptions {
+  // base_path overrides the default "/api/v1" prefix (ARCHITECTURE.md
+  // §8.1) applied to every route this service derives, both
+  // convention-derived and google.api.http-annotation-derived alike
+  // (ARCHITECTURE.md §20). Unset means the default is used, so a
+  // service that doesn't opt in sees no change.
+  string base_path = 50001;
+}

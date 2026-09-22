@@ -8,16 +8,25 @@ import (
 	"github.com/bufbuild/protocompile"
 	"github.com/bufbuild/protocompile/linker"
 	"github.com/bufbuild/protocompile/reporter"
+
+	"github.com/wahyurudiyan/sunny-go/internal/codegen/proto/wellknown"
 )
 
 // Compile parses and links relPath (found under protoDir, e.g.
 // "user.proto" under "contract/pb") into a fully-linked file, using a
-// pure-Go compiler — no protoc or buf binary required on PATH.
+// pure-Go compiler — no protoc or buf binary required on PATH. Imports
+// resolve first against protoDir, then against sgo's own vendored
+// proto files (wellknown.Resolver — sgo/options.proto,
+// buf/validate/validate.proto), then against protocompile's built-in
+// google/protobuf/*.proto well-knowns.
 func Compile(protoDir, relPath string) (linker.File, error) {
 	var errs []string
 
+	local := &protocompile.SourceResolver{ImportPaths: []string{protoDir}}
+	resolver := protocompile.WithStandardImports(protocompile.CompositeResolver{local, wellknown.Resolver()})
+
 	compiler := protocompile.Compiler{
-		Resolver: &protocompile.SourceResolver{ImportPaths: []string{protoDir}},
+		Resolver: resolver,
 		Reporter: reporter.NewReporter(func(err reporter.ErrorWithPos) error {
 			errs = append(errs, err.Error())
 			return nil

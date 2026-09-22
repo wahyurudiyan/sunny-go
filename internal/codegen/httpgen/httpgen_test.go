@@ -33,7 +33,7 @@ var _ = Describe("Generate", func() {
 
 	Context("gin", func() {
 		BeforeEach(func() {
-			destDir = filepath.Join(root, "internal", "adapter", "in", "http", "gin")
+			destDir = filepath.Join(root, "internal", "infrastructure", "transport", "http", "gin")
 			Expect(httpgen.GenerateServer(config.HTTPFrameworkGin, destDir)).To(Succeed())
 			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkGin, file, p, destDir)).To(Succeed())
 		})
@@ -45,18 +45,20 @@ var _ = Describe("Generate", func() {
 			Expect(string(content)).To(ContainSubstring("func (s *Server) Start(addr string) error"))
 		})
 
-		It("writes route registrations using gin's HTTP-method-named functions", func() {
+		It("writes route registrations calling the application service directly", func() {
 			content, err := os.ReadFile(filepath.Join(destDir, "user_routes_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(engine *gin.Engine, svc in.UserUseCase)"))
+			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(engine *gin.Engine, svc *app.UserService)"))
 			Expect(string(content)).To(ContainSubstring(`engine.GET("/api/v1/users/:id"`))
 			Expect(string(content)).To(ContainSubstring(`engine.POST("/api/v1/users"`))
+			Expect(string(content)).To(ContainSubstring(`gin.H{"user": resp}`))
+			Expect(string(content)).To(ContainSubstring(`gin.H{"success": true}`))
 		})
 	})
 
 	Context("echo", func() {
 		BeforeEach(func() {
-			destDir = filepath.Join(root, "internal", "adapter", "in", "http", "echo")
+			destDir = filepath.Join(root, "internal", "infrastructure", "transport", "http", "echo")
 			Expect(httpgen.GenerateServer(config.HTTPFrameworkEcho, destDir)).To(Succeed())
 			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkEcho, file, p, destDir)).To(Succeed())
 		})
@@ -67,17 +69,17 @@ var _ = Describe("Generate", func() {
 			Expect(string(content)).To(ContainSubstring("*echo.Echo"))
 		})
 
-		It("writes route registrations using echo.Context handlers", func() {
+		It("writes route registrations calling the application service directly", func() {
 			content, err := os.ReadFile(filepath.Join(destDir, "user_routes_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(e *echo.Echo, svc in.UserUseCase)"))
+			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(e *echo.Echo, svc *app.UserService)"))
 			Expect(string(content)).To(ContainSubstring(`e.GET("/api/v1/users/:id"`))
 		})
 	})
 
 	Context("chi", func() {
 		BeforeEach(func() {
-			destDir = filepath.Join(root, "internal", "adapter", "in", "http", "chi")
+			destDir = filepath.Join(root, "internal", "infrastructure", "transport", "http", "chi")
 			Expect(httpgen.GenerateServer(config.HTTPFrameworkChi, destDir)).To(Succeed())
 			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkChi, file, p, destDir)).To(Succeed())
 		})
@@ -91,7 +93,7 @@ var _ = Describe("Generate", func() {
 		It("writes route registrations with chi's {id} path syntax", func() {
 			content, err := os.ReadFile(filepath.Join(destDir, "user_routes_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(r chi.Router, svc in.UserUseCase)"))
+			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(r chi.Router, svc *app.UserService)"))
 			Expect(string(content)).To(ContainSubstring(`r.Get("/api/v1/users/{id}"`))
 			Expect(string(content)).To(ContainSubstring("chi.URLParam(req, \"id\")"))
 		})

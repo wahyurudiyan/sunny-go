@@ -89,10 +89,22 @@ var _ = Describe("Generate", func() {
 	})
 })
 
-// buildTestModule assembles a throwaway Go module with p's domain
-// package and memory repository generated into it, so the generated
-// List method can actually be executed rather than just pattern-matched
-// as text.
+const memgenUserProto = `syntax = "proto3";
+
+package user.v1;
+
+option go_package = "demo/contract/gen/user";
+
+message User {
+  string id = 1;
+  string name = 2;
+}
+`
+
+// buildTestModule assembles a throwaway Go module with p's aggregate
+// domain package, its event kernel, and the memory repository generated
+// into it, so the generated List method can actually be executed rather
+// than just pattern-matched as text.
 func buildTestModule(p core.Paths) string {
 	GinkgoHelper()
 
@@ -102,20 +114,22 @@ func buildTestModule(p core.Paths) string {
 
 	Expect(os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module demo\n\ngo 1.22\n"), 0644)).To(Succeed())
 
-	file := &sgoproto.File{
-		Messages: []sgoproto.Message{{
-			Name: "User",
-			Fields: []sgoproto.Field{
-				{Name: "id", GoName: "Id", Kind: sgoproto.KindString},
-				{Name: "name", GoName: "Name", Kind: sgoproto.KindString},
-			},
-		}},
-	}
+	protoDir := filepath.Join(dir, "contract", "pb")
+	Expect(os.MkdirAll(protoDir, 0755)).To(Succeed())
+	Expect(os.WriteFile(filepath.Join(protoDir, "user.proto"), []byte(memgenUserProto), 0644)).To(Succeed())
 
-	domainDir := filepath.Join(dir, "internal", "core", "domain", "user")
-	Expect(core.GenerateDomain(file, p, domainDir)).To(Succeed())
+	fd, err := sgoproto.Compile(protoDir, "user.proto")
+	Expect(err).NotTo(HaveOccurred())
+	file, err := sgoproto.Build(fd)
+	Expect(err).NotTo(HaveOccurred())
 
-	memoryDir := filepath.Join(dir, "internal", "adapter", "out", "persistence", "memory")
+	eventDir := filepath.Join(dir, "internal", "domain", "event")
+	Expect(core.GenerateEventKernel(eventDir)).To(Succeed())
+
+	domainDir := filepath.Join(dir, "internal", "domain", "user")
+	Expect(core.GenerateAggregate(file, fd, p, domainDir)).To(Succeed())
+
+	memoryDir := filepath.Join(dir, "internal", "infrastructure", "persistence", "memory")
 	Expect(memgen.Generate(p, memoryDir)).To(Succeed())
 
 	return dir
@@ -127,7 +141,7 @@ func buildTestModule(p core.Paths) string {
 func runInModule(moduleDir, body string) string {
 	GinkgoHelper()
 
-	main := "package main\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\n\tuser \"demo/internal/core/domain/user\"\n\tmemory \"demo/internal/adapter/out/persistence/memory\"\n)\n\nfunc main() {\n" + body + "\n}\n"
+	main := "package main\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\n\tuser \"demo/internal/domain/user\"\n\tmemory \"demo/internal/infrastructure/persistence/memory\"\n)\n\nfunc main() {\n" + body + "\n}\n"
 
 	mainDir := filepath.Join(moduleDir, "cmd", "harness")
 	Expect(os.MkdirAll(mainDir, 0755)).To(Succeed())

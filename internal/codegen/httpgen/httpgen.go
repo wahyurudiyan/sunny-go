@@ -45,9 +45,10 @@ var frameworks = map[config.HTTPFramework]framework{
 }
 
 // ImportPath is where the HTTP adapter for the given framework lives,
-// e.g. "<module>/internal/adapter/in/http/gin".
+// e.g. "<module>/internal/infrastructure/transport/http/gin"
+// (ARCHITECTURE.md §17).
 func ImportPath(module string, fw config.HTTPFramework) string {
-	return path.Join(module, "internal/adapter/in/http", string(fw))
+	return path.Join(module, "internal/infrastructure/transport/http", string(fw))
 }
 
 // GenerateServer writes the framework's server boilerplate

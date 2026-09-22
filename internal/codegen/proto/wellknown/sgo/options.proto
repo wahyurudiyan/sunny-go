@@ -56,6 +56,17 @@ extend google.protobuf.MethodOptions {
   // naming-convention default (Get/List) for an RPC that doesn't fit
   // it.
   bool query = 50002;
+
+  // repository_query marks this RPC as also needing a counterpart on
+  // the aggregate repository port (ARCHITECTURE.md §21), generated
+  // alongside its usual usecase-port method, HTTP route, and gRPC
+  // method — not a repository-only declaration.
+  bool repository_query = 50003;
+
+  // hide_route independently skips HTTP route registration for this
+  // RPC (ARCHITECTURE.md §21). Its gRPC method, and its repository
+  // counterpart if also marked repository_query, are unaffected.
+  bool hide_route = 50004;
 }
 
 extend google.protobuf.ServiceOptions {

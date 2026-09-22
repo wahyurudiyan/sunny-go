@@ -81,7 +81,7 @@ var _ = Describe("GenerateApplicationService and GenerateEventPublisher", func()
 
 		Expect(core.GenerateEventKernel(eventDir)).To(Succeed())
 		Expect(core.GenerateAggregate(file, fd, p, domainDir)).To(Succeed())
-		Expect(core.GenerateAggregateRepositoryPort(fd, p, domainDir)).To(Succeed())
+		Expect(core.GenerateAggregateRepositoryPort(file, fd, p, domainDir)).To(Succeed())
 		Expect(core.GenerateDomainErrors(fd, p, domainDir)).To(Succeed())
 		Expect(core.GenerateCommandsAndQueries(file, fd, p, appDir)).To(Succeed())
 		Expect(core.GenerateEventPublisher(p, portsDir)).To(Succeed())

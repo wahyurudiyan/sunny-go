@@ -1,0 +1,4 @@
+
+func (r *{{.Receiver}}) {{.Method.Name}}(ctx context.Context{{range .Method.Params}}, {{.GoParam}} {{.GoType}}{{end}}) (*{{.DomainPkg}}.{{.AggregateName}}, error) {
+	panic("sgo: TODO implement {{.Method.Name}}")
+}

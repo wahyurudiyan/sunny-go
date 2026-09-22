@@ -80,6 +80,20 @@ func IsQuery(mtd protoreflect.MethodDescriptor) bool {
 	return proto.GetExtension(methodOptions(mtd), sgopb.E_Query).(bool)
 }
 
+// IsRepositoryQuery reports whether mtd is explicitly marked
+// `option (sgo.repository_query) = true;` — it also needs a
+// counterpart on the aggregate repository port (ARCHITECTURE.md §21).
+func IsRepositoryQuery(mtd protoreflect.MethodDescriptor) bool {
+	return proto.GetExtension(methodOptions(mtd), sgopb.E_RepositoryQuery).(bool)
+}
+
+// IsHideRoute reports whether mtd is explicitly marked
+// `option (sgo.hide_route) = true;` — it should get no HTTP route
+// (ARCHITECTURE.md §21), independent of repository_query.
+func IsHideRoute(mtd protoreflect.MethodDescriptor) bool {
+	return proto.GetExtension(methodOptions(mtd), sgopb.E_HideRoute).(bool)
+}
+
 // FieldConstraints returns fd's protovalidate constraints
 // (`(buf.validate.field) = {...}`), or nil if it has none.
 func FieldConstraints(fd protoreflect.FieldDescriptor) *validatepb.FieldRules {

@@ -20,11 +20,12 @@ import (
 // method on receiver that ISN'T in methodNames gets a one-line warning
 // comment inserted above it, once, rather than being deleted.
 //
-// Shared by the pre-Phase-12 usecase-port service generator
-// (service.go) and the Phase-12 application service generator
-// (application.go) — the AST mechanism doesn't care what a stub's
-// content is, only that methods exist.
-func ensureGoMethods(path, receiver, entity string, methodNames []string, stubFor func(name string) ([]byte, error)) error {
+// Shared by the Phase-12 application service generator (application.go)
+// and, for real persistence engines' owned repository-query companion
+// files (§21/Phase 16), the sqlgen/mongogen/memgen packages — the AST
+// mechanism doesn't care what a stub's content is, only that methods
+// exist.
+func ensureGoMethods(path, receiver string, methodNames []string, stubFor func(name string) ([]byte, error)) error {
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read %s: %w", path, err)
@@ -65,7 +66,7 @@ func ensureGoMethods(path, receiver, entity string, methodNames []string, stubFo
 
 	sort.Slice(orphans, func(i, j int) bool { return orphans[i].Line > orphans[j].Line })
 	for _, o := range orphans {
-		comment := orphanComment(o.Name, entity)
+		comment := orphanComment(o.Name, receiver)
 		idx := o.Line - 1
 		if idx > 0 && strings.TrimSpace(lines[idx-1]) == comment {
 			continue // already annotated by a previous run
@@ -100,8 +101,8 @@ func ensureGoMethods(path, receiver, entity string, methodNames []string, stubFo
 	return nil
 }
 
-func orphanComment(method, entity string) string {
-	return fmt.Sprintf("// sgo: %s is no longer part of %sUseCase; remove if unused", method, entityTitle(entity))
+func orphanComment(method, receiver string) string {
+	return fmt.Sprintf("// sgo: %s is no longer part of %s; remove if unused", method, receiver)
 }
 
 // receiverTypeName returns the bare type name of a method's receiver

@@ -100,8 +100,17 @@ func GenerateAggregate(f *sgoproto.File, fd protoreflect.FileDescriptor, p Paths
 // (port.go) while both exist side by side; GenerateCode switches over
 // to this one and the old generators are removed together (§17/Phase
 // 12's project-wide rewiring).
-func GenerateAggregateRepositoryPort(fd protoreflect.FileDescriptor, p Paths, destDir string) error {
+//
+// Also adds one interface method per RPC marked
+// `option (sgo.repository_query) = true;`, beyond the fixed CRUD shape
+// (§21/Phase 16).
+func GenerateAggregateRepositoryPort(f *sgoproto.File, fd protoreflect.FileDescriptor, p Paths, destDir string) error {
 	aggregateMD, err := AggregateRoot(fd, p.Entity)
+	if err != nil {
+		return err
+	}
+
+	queryMethods, err := RepositoryQueryMethods(fd, f, p.Entity)
 	if err != nil {
 		return err
 	}
@@ -109,9 +118,11 @@ func GenerateAggregateRepositoryPort(fd protoreflect.FileDescriptor, p Paths, de
 	data := struct {
 		Package       string
 		AggregateName string
+		QueryMethods  []RepositoryQueryMethod
 	}{
 		Package:       p.Entity,
 		AggregateName: string(aggregateMD.Name()),
+		QueryMethods:  queryMethods,
 	}
 
 	path := filepath.Join(destDir, "repository.go")

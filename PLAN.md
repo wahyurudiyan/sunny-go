@@ -875,20 +875,21 @@ of the default `/api/v1`; every existing generated-project e2e spec
 still passes with no proto changes. All met — full repo suite green,
 `gofmt`/`go vet` clean.
 
-## Phase 16 — Repository-port methods beyond fixed CRUD **(planned)**
+## Phase 16 — Repository-port methods beyond fixed CRUD **(done)**
 
 Full design in ARCHITECTURE.md §21. Closes a real gap in the safe-
 regeneration story (§6): the usecase port (`internal/core/port/in/
-<entity>_usecase.go`) already grows a new method for free when you add
-an RPC to the proto and re-run `sgo generate code` — verified live
-against a real generated project before writing this: adding an
-`ArchiveUser` RPC produced `ArchiveUser` on the usecase interface and
-appended a matching stub to the owned `user_service.go`, with the
-hand-written `CreateUser` body untouched. But the repository port
-(`internal/core/port/out/<entity>_repository.go`) is *permanently*
-fixed at `Create/Get/List/Update/Delete` (Decision #11) — adding
-`ArchiveUser` to the proto left it exactly as it was. There is
-currently no supported way to add a repository method like
+<entity>_usecase.go`, pre-Phase-12; now `internal/application/<entity>/
+service.go`) already grows a new method for free when you add an RPC to
+the proto and re-run `sgo generate code` — verified live against a real
+generated project before writing this: adding an `ArchiveUser` RPC
+produced `ArchiveUser` on the usecase interface and appended a matching
+stub to the owned `user_service.go`, with the hand-written `CreateUser`
+body untouched. But the repository port (`internal/core/port/out/
+<entity>_repository.go`, pre-Phase-12; now `internal/domain/<entity>/
+repository.go`) is *permanently* fixed at `Create/Get/List/Update/Delete`
+(Decision #11) — adding `ArchiveUser` to the proto left it exactly as it
+was. There is currently no supported way to add a repository method like
 `FindByEmail(ctx, email string) (*User, error)`; hand-editing the
 generated file works until the next `generate code` run silently
 reverts it, since nothing protects it the way owned files are
@@ -905,16 +906,16 @@ stub everywhere, keeping local dev fully runnable with zero manual
 adapter edits for the common case — the same "always runnable" promise
 Decision #15 already makes for the fixed CRUD set.
 
-- [ ] **`option (sgo.repository_query) = true;`** on an RPC method —
+- [x] **`option (sgo.repository_query) = true;`** on an RPC method —
       another field on the same vendored `sgo/options.proto` Phase 12
       introduces (extended by Phase 15 for `(sgo.base_path)`), not a
       third vendored file. A `MethodOptions` extension. Marks that RPC
       as *also* needing
       a repository-port counterpart, generated alongside its usual
-      usecase-port method, HTTP route, and gRPC method — by design, per
-      the decision above, this makes the RPC both a public endpoint and
-      a repository method, not repository-only.
-- [ ] **`option (sgo.hide_route) = true;`** — a second, independent
+      application-service method, HTTP route, and gRPC method — by
+      design, per the decision above, this makes the RPC both a public
+      endpoint and a repository method, not repository-only.
+- [x] **`option (sgo.hide_route) = true;`** — a second, independent
       option on the same RPC that skips HTTP route registration for it
       (still generates the gRPC method and, if also marked
       `repository_query`, the repository counterpart). Cheap once the
@@ -922,34 +923,39 @@ Decision #15 already makes for the fixed CRUD set.
       "now it's forced to be a public HTTP endpoint too" tradeoff the
       `AskUserQuestion` answer explicitly accepted — worth having rather
       than leaving that as a flat limitation.
-- [ ] **Repository port generation** — for an RPC marked
-      `repository_query`, derive the method name by stripping the entity
-      name from the RPC name if it's a prefix (`FindUserByEmail` on
-      entity `User` → `FindByEmail`, matching the existing unprefixed
-      `Create`/`Get`/... convention), otherwise keep the RPC name as-is.
+- [x] **Repository port generation** — for an RPC marked
+      `repository_query`, derive the method name by removing every
+      occurrence of the entity name from the RPC name (`FindUserByEmail`
+      on entity `User` → `FindByEmail`; `ArchiveUser` → `Archive`),
+      otherwise keep the RPC name as-is (`PurgeStale` stays `PurgeStale`).
       Parameters come from the request message's fields, flattened to
       individual scalar Go parameters in declaration order (matching
-      `Get(ctx, id string)`'s existing style, not the usecase port's
-      opaque `*Request` style) — **v1 constraint, stated plainly rather
-      than silently unsupported**: every request field must be a scalar
-      (no nested messages); a nested-message field fails generation with
-      a clear error instead of guessing how to flatten it. Return type:
-      v1 only supports a response message shaped like the existing
-      single-entity wrapper (`UserResponse{ User user }`, the same shape
-      `Get`/`Create`/`Update` already use) — a list-shaped response
-      (pagination) isn't supported yet, logged as a Non-goal below.
-- [ ] **Real persistence engines (Postgres/MySQL/MongoDB)** — each
+      `Get(ctx, id string)`'s existing style, not the application
+      service's opaque `*Request` style) — **v1 constraint, stated
+      plainly rather than silently unsupported**: every request field
+      must be a scalar (no nested messages, no repeated fields); one
+      that isn't fails generation with a clear error instead of guessing
+      how to flatten it. A derived name colliding with the port's fixed
+      `Create`/`Get`/`List`/`Update`/`Delete` methods is also rejected
+      with a clear error, rather than surfacing as a confusing duplicate-
+      method Go compiler error later. Return type: v1 only supports the
+      single-entity shape (`*User, error`, the same shape `Get` already
+      returns) — a list-shaped response (pagination) isn't supported
+      yet, logged as a Non-goal below.
+- [x] **Real persistence engines (Postgres/MySQL/MongoDB)** — each
       engine's adapter package gains a new *owned* companion file
       alongside its existing generated one (e.g. `postgres/
       user_repository.go` next to `postgres/user_repository_gen.go`),
       created once with a `panic("sgo: TODO implement FindByEmail")`
       stub per custom method, using the *exact same* append-only-new-
       stubs mechanism (Decision #12) already proven for
-      `internal/core/service/<entity>_service.go` — a hand-written
+      `internal/application/<entity>/service.go` — a hand-written
       implementation survives every later `generate code` run, and a
       newly added custom method gets a fresh stub appended without
-      touching what's already there.
-- [ ] **In-memory adapter** — auto-implements a custom method when its
+      touching what's already there. Implemented as one shared helper
+      (`core.GenerateRepositoryQueryStubs`) all three generators call,
+      not three separate implementations.
+- [x] **In-memory adapter** — auto-implements a custom method when its
       signature is exactly one scalar parameter whose name
       case-insensitively matches an exported field on the domain entity
       (`email string` → `Email` field): generates a linear scan
@@ -960,28 +966,31 @@ Decision #15 already makes for the fixed CRUD set.
       mapping (more than one parameter, or no matching field) — fails
       toward "you write it," never toward a guess that silently returns
       wrong data.
-- [ ] Ginkgo specs: option parsing (a marked RPC produces the expected
-      repository method; an unmarked one doesn't); the nested-message
-      rejection with a clear error; the entity-prefix-stripping naming
-      rule; a full generate-code run per persistence engine asserting
-      the owned stub file's existence and content on first generation,
-      then that a hand-written implementation and a second custom method
-      both survive a second run (the two-survives-regeneration pattern
-      already used throughout `internal/codegen`'s existing suites);
-      the in-memory auto-implementation actually returning the right
-      entity for a simple case, and correctly falling back to a stub for
-      a multi-parameter one; `hide_route` actually suppressing the HTTP
-      route while leaving the gRPC method and repository counterpart
-      intact.
+- [x] Ginkgo specs: option parsing (a marked RPC produces the expected
+      repository method; an unmarked one doesn't); the scalar-field and
+      name-collision rejections with a clear error; the name-stripping
+      rule (prefix, interior, and no-match cases); a full generate-code
+      run per persistence engine (memgen/sqlgen/mongogen package suites,
+      plus a real `sgo init` → proto → `sgo generate code` → `go build`/
+      `go run` round-trip in `internal/codegen/generate_test.go`)
+      asserting the owned stub file's existence and content on first
+      generation, then that a hand-written implementation survives a
+      second run (the two-survives-regeneration pattern already used
+      throughout `internal/codegen`'s existing suites); the in-memory
+      auto-implementation actually returning the right entity for a
+      simple case, and correctly falling back to a stub for a
+      multi-parameter one; `hide_route` actually suppressing the HTTP
+      route while leaving the rest of the service unaffected.
 
 **Exit criteria:** an RPC marked `(sgo.repository_query)` produces a
 matching method on the repository port; a hand-written implementation
 in each real engine's owned companion file survives regeneration, the
-same way `<entity>_service.go` already does; the in-memory adapter
-answers a simple single-field query correctly with zero hand-editing;
-an RPC additionally marked `(sgo.hide_route)` gets no HTTP route but
-keeps its gRPC method and repository counterpart; every existing
-generated-project e2e spec still passes with no proto changes.
+same way `service.go` already does; the in-memory adapter answers a
+simple single-field query correctly with zero hand-editing; an RPC
+additionally marked `(sgo.hide_route)` gets no HTTP route but keeps its
+gRPC method and repository counterpart; every existing generated-project
+e2e spec still passes with no proto changes. All met — full repo suite
+green, `gofmt`/`go vet` clean.
 
 ## Phase 17 — Docs: README as a getting-started guide, CONTRIBUTING.md **(planned)**
 
@@ -1058,11 +1067,11 @@ contradicts `docs/CLI.md` or the actual current layout.
   generated file of their own design. Nobody's asked for that yet.
 - A repository-only method that never becomes a public RPC — Phase 16's
   declaration mechanism is deliberately an option on an existing RPC
-  (`AskUserQuestion`-confirmed), which always keeps that RPC's usecase
-  method, and its gRPC method unless a fundamentally different mechanism
-  is built later; `(sgo.hide_route)` only suppresses the HTTP route, not
-  the whole public surface. Revisit if a genuinely internal-only query
-  (no gRPC exposure either) turns out to be needed.
+  (`AskUserQuestion`-confirmed), which always keeps that RPC's
+  application-service method, and its gRPC method unless a fundamentally
+  different mechanism is built later; `(sgo.hide_route)` only suppresses
+  the HTTP route, not the whole public surface. Revisit if a genuinely
+  internal-only query (no gRPC exposure either) turns out to be needed.
 - A custom repository method whose request message has a nested-message
   field, or whose response is list-shaped (pagination) — Phase 16 only
   flattens scalar request fields and only supports the existing single-

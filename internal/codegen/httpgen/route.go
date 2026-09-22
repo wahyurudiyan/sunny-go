@@ -53,14 +53,17 @@ func (r Route) FullPath(colonStyle bool) string {
 
 var pathVarRe = regexp.MustCompile(`\{([^{}=*]*)([=*][^{}]*)?\}`)
 
-// BuildRoutes derives one Route per RPC on f's (single) service. An RPC
-// carrying a `(google.api.http)` annotation (ARCHITECTURE.md §20) uses
-// it; one without falls back to the Create/Get/List/Update/Delete
-// naming convention (§8.1), unchanged from before this annotation
-// support existed — every proto and every generated project that
-// predates it keeps working identically. fd is f's underlying
-// descriptor, needed to read the annotation and the service's
-// `(sgo.base_path)` override; f's IR has already dropped that
+// BuildRoutes derives one Route per RPC on f's (single) service, except
+// one marked `option (sgo.hide_route) = true;` (ARCHITECTURE.md §21),
+// which gets none at all — its gRPC method and any repository-port
+// counterpart are unaffected, only its HTTP route is skipped. Of the
+// rest, an RPC carrying a `(google.api.http)` annotation
+// (ARCHITECTURE.md §20) uses it; one without falls back to the
+// Create/Get/List/Update/Delete naming convention (§8.1), unchanged
+// from before this annotation support existed — every proto and every
+// generated project that predates it keeps working identically. fd is
+// f's underlying descriptor, needed to read the annotation and the
+// service's `(sgo.base_path)` override; f's IR has already dropped that
 // information by the time it's built.
 func BuildRoutes(fd protoreflect.FileDescriptor, f *sgoproto.File, entity string) ([]Route, error) {
 	svc, ok := primaryService(f)
@@ -87,6 +90,10 @@ func BuildRoutes(fd protoreflect.FileDescriptor, f *sgoproto.File, entity string
 		mtd, ok := methodByName[m.Name]
 		if !ok {
 			return nil, fmt.Errorf("httpgen: RPC %q has no matching descriptor (compiler/IR mismatch)", m.Name)
+		}
+
+		if sgoproto.IsHideRoute(mtd) {
+			continue
 		}
 
 		if rule := sgoproto.HTTPRule(mtd); rule != nil {

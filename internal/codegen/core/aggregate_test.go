@@ -182,7 +182,7 @@ func main() {
 	})
 
 	It("generates a repository port and sentinel errors typed directly against the aggregate, no domain import needed", func() {
-		Expect(core.GenerateAggregateRepositoryPort(fd, p, domainDir)).To(Succeed())
+		Expect(core.GenerateAggregateRepositoryPort(file, fd, p, domainDir)).To(Succeed())
 		Expect(core.GenerateDomainErrors(fd, p, domainDir)).To(Succeed())
 
 		repoSrc, err := os.ReadFile(filepath.Join(domainDir, "repository.go"))

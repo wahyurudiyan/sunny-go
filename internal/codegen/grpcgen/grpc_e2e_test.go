@@ -151,14 +151,14 @@ var _ = Describe("the gRPC adapter wired to the full DDD stack", func() {
 
 		Expect(core.GenerateEventKernel(eventDir)).To(Succeed())
 		Expect(core.GenerateAggregate(file, fd, p, domainDir)).To(Succeed())
-		Expect(core.GenerateAggregateRepositoryPort(fd, p, domainDir)).To(Succeed())
+		Expect(core.GenerateAggregateRepositoryPort(file, fd, p, domainDir)).To(Succeed())
 		Expect(core.GenerateDomainErrors(fd, p, domainDir)).To(Succeed())
 		Expect(core.GenerateCommandsAndQueries(file, fd, p, appDir)).To(Succeed())
 		Expect(core.GenerateEventPublisher(p, portsDir)).To(Succeed())
 		Expect(core.GenerateApplicationService(file, fd, p, appDir)).To(Succeed())
 		Expect(os.WriteFile(filepath.Join(appDir, "service.go"), []byte(grpcE2EUserServiceGo), 0644)).To(Succeed())
 
-		Expect(memgen.Generate(p, memoryDir)).To(Succeed())
+		Expect(memgen.Generate(file, fd, p, memoryDir)).To(Succeed())
 		Expect(wiregen.Generate(fd, wireDir)).To(Succeed())
 		Expect(core.GenerateInfraMapper(file, p, mapperDir)).To(Succeed())
 		Expect(grpcgen.Generate(file, p, grpcDir)).To(Succeed())

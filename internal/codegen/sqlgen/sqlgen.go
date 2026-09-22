@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"google.golang.org/protobuf/reflect/protoreflect"
+
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/core"
 	sgoproto "github.com/wahyurudiyan/sunny-go/internal/codegen/proto"
 	"github.com/wahyurudiyan/sunny-go/internal/config"
@@ -99,23 +101,38 @@ func scalarColumns(msg *sgoproto.Message) []column {
 }
 
 // Generate writes the entity's repository adapter for engine, in the
-// mode sgo.yaml currently selects.
-func Generate(engine config.PersistenceEngine, mode config.PersistenceMode, f *sgoproto.File, p core.Paths, destDir string) error {
+// mode sgo.yaml currently selects, plus — for every RPC marked
+// `option (sgo.repository_query) = true;` (ARCHITECTURE.md §21) — an
+// owned companion file with one panic("sgo: TODO implement ...") stub
+// per custom method: unlike memgen, a real engine's query logic can't
+// be auto-generated, since sgo has no way to know what SQL a method
+// like FindByEmail needs.
+func Generate(engine config.PersistenceEngine, mode config.PersistenceMode, f *sgoproto.File, fd protoreflect.FileDescriptor, p core.Paths, destDir string) error {
 	def, ok := engines[engine]
 	if !ok {
 		return fmt.Errorf("sqlgen: unsupported SQL engine %q", engine)
 	}
 
-	msg := f.FindMessage(entityTitle(p.Entity))
+	entity := entityTitle(p.Entity)
+	msg := f.FindMessage(entity)
 	if msg == nil {
-		return fmt.Errorf("sqlgen: proto file has no %s message", entityTitle(p.Entity))
+		return fmt.Errorf("sqlgen: proto file has no %s message", entity)
 	}
 	cols := scalarColumns(msg)
 
 	if mode == config.PersistenceModeORM {
-		return generateORM(def, engine, cols, p, destDir)
+		if err := generateORM(def, engine, cols, p, destDir); err != nil {
+			return err
+		}
+	} else if err := generateSelfManaged(def, engine, cols, p, destDir); err != nil {
+		return err
 	}
-	return generateSelfManaged(def, engine, cols, p, destDir)
+
+	queryMethods, err := core.RepositoryQueryMethods(fd, f, p.Entity)
+	if err != nil {
+		return err
+	}
+	return core.GenerateRepositoryQueryStubs(string(engine), p.Entity, p.AggregateDomainImportPath(), entity, queryMethods, destDir, p.Entity+"_repository.go")
 }
 
 func entityTitle(name string) string {

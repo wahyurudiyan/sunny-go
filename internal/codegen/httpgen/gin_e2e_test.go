@@ -147,7 +147,7 @@ var _ = Describe("the Gin HTTP adapter wired to the full DDD stack", func() {
 
 		Expect(core.GenerateEventKernel(eventDir)).To(Succeed())
 		Expect(core.GenerateAggregate(file, fd, p, domainDir)).To(Succeed())
-		Expect(core.GenerateAggregateRepositoryPort(fd, p, domainDir)).To(Succeed())
+		Expect(core.GenerateAggregateRepositoryPort(file, fd, p, domainDir)).To(Succeed())
 		Expect(core.GenerateDomainErrors(fd, p, domainDir)).To(Succeed())
 		Expect(core.GenerateCommandsAndQueries(file, fd, p, appDir)).To(Succeed())
 		Expect(core.GenerateEventPublisher(p, portsDir)).To(Succeed())
@@ -157,7 +157,7 @@ var _ = Describe("the Gin HTTP adapter wired to the full DDD stack", func() {
 		// file sgo never touches again once it exists.
 		Expect(os.WriteFile(filepath.Join(appDir, "service.go"), []byte(userServiceGo), 0644)).To(Succeed())
 
-		Expect(memgen.Generate(p, memoryDir)).To(Succeed())
+		Expect(memgen.Generate(file, fd, p, memoryDir)).To(Succeed())
 		Expect(httpgen.GenerateServer(config.HTTPFrameworkGin, ginDir)).To(Succeed())
 		Expect(httpgen.GenerateRoutes(config.HTTPFrameworkGin, fd, file, p, ginDir)).To(Succeed())
 

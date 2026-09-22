@@ -135,14 +135,14 @@ var _ = Describe("proto-defined HTTP paths (google.api.http) and base_path", fun
 
 		Expect(core.GenerateEventKernel(eventDir)).To(Succeed())
 		Expect(core.GenerateAggregate(file, fd, p, domainDir)).To(Succeed())
-		Expect(core.GenerateAggregateRepositoryPort(fd, p, domainDir)).To(Succeed())
+		Expect(core.GenerateAggregateRepositoryPort(file, fd, p, domainDir)).To(Succeed())
 		Expect(core.GenerateDomainErrors(fd, p, domainDir)).To(Succeed())
 		Expect(core.GenerateCommandsAndQueries(file, fd, p, appDir)).To(Succeed())
 		Expect(core.GenerateEventPublisher(p, portsDir)).To(Succeed())
 		Expect(core.GenerateApplicationService(file, fd, p, appDir)).To(Succeed())
 		Expect(os.WriteFile(filepath.Join(appDir, "service.go"), []byte(annotatedE2EUserServiceGo), 0644)).To(Succeed())
 
-		Expect(memgen.Generate(p, memoryDir)).To(Succeed())
+		Expect(memgen.Generate(file, fd, p, memoryDir)).To(Succeed())
 		Expect(httpgen.GenerateServer(config.HTTPFrameworkGin, ginDir)).To(Succeed())
 		Expect(httpgen.GenerateRoutes(config.HTTPFrameworkGin, fd, file, p, ginDir)).To(Succeed())
 

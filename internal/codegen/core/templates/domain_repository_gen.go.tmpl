@@ -15,4 +15,9 @@ type {{.AggregateName}}Repository interface {
 	List(ctx context.Context, page, pageSize int32) ([]*{{.AggregateName}}, int32, error)
 	Update(ctx context.Context, a *{{.AggregateName}}) (*{{.AggregateName}}, error)
 	Delete(ctx context.Context, id string) error
+{{- range .QueryMethods}}
+	// {{.Name}} is derived from the {{.RPC}} RPC's
+	// `option (sgo.repository_query) = true;` marking.
+	{{.Name}}(ctx context.Context{{range .Params}}, {{.GoParam}} {{.GoType}}{{end}}) (*{{$.AggregateName}}, error)
+{{- end}}
 }

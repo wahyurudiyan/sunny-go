@@ -136,6 +136,54 @@ message DeleteUserResponse {
 			Expect(routes[0].HasBody).To(BeTrue())
 		})
 	})
+
+	Context("when an RPC is marked (sgo.hide_route)", func() {
+		It("gets no route at all, while the rest of the service is unaffected", func() {
+			protoDir := filepath.Join(dir, "contract", "pb")
+			content := `syntax = "proto3";
+
+package user.v1;
+
+import "sgo/options.proto";
+
+option go_package = "demo/contract/gen/user";
+
+service UserService {
+  rpc CreateUser(CreateUserRequest) returns (UserResponse);
+
+  rpc InternalSync(SyncRequest) returns (SyncResponse) {
+    option (sgo.hide_route) = true;
+  }
+}
+
+message CreateUserRequest {
+  string name = 1;
+}
+
+message SyncRequest {
+  string token = 1;
+}
+
+message SyncResponse {
+  bool ok = 1;
+}
+
+message UserResponse {
+  string id = 1;
+}
+`
+			Expect(os.WriteFile(filepath.Join(protoDir, "user.proto"), []byte(content), 0644)).To(Succeed())
+			hiddenFD, err := sgoproto.Compile(protoDir, "user.proto")
+			Expect(err).NotTo(HaveOccurred())
+			hiddenFile, err := sgoproto.Build(hiddenFD)
+			Expect(err).NotTo(HaveOccurred())
+
+			routes, err := httpgen.BuildRoutes(hiddenFD, hiddenFile, "user")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(routes).To(HaveLen(1))
+			Expect(routes[0].Method.Name).To(Equal("CreateUser"))
+		})
+	})
 })
 
 // annotatedRoutes compiles a proto whose sole RPC carries the given

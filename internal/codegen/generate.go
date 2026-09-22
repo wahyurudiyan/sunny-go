@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"google.golang.org/protobuf/reflect/protoreflect"
+
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/bootstrap"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/cachegen"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/core"
@@ -67,7 +69,7 @@ func GenerateCode(projectDir, name string, cfg *config.Config) error {
 	if err := core.GenerateAggregate(file, fd, p, domainDir); err != nil {
 		return err
 	}
-	if err := core.GenerateAggregateRepositoryPort(fd, p, domainDir); err != nil {
+	if err := core.GenerateAggregateRepositoryPort(file, fd, p, domainDir); err != nil {
 		return err
 	}
 	if err := core.GenerateDomainErrors(fd, p, domainDir); err != nil {
@@ -101,11 +103,11 @@ func GenerateCode(projectDir, name string, cfg *config.Config) error {
 		return err
 	}
 
-	if err := memgen.Generate(p, filepath.Join(projectDir, "internal", "infrastructure", "persistence", "memory")); err != nil {
+	if err := memgen.Generate(file, fd, p, filepath.Join(projectDir, "internal", "infrastructure", "persistence", "memory")); err != nil {
 		return err
 	}
 
-	if err := generateRealPersistence(cfg, file, p, projectDir); err != nil {
+	if err := generateRealPersistence(cfg, file, fd, p, projectDir); err != nil {
 		return err
 	}
 
@@ -130,7 +132,7 @@ func GenerateCode(projectDir, name string, cfg *config.Config) error {
 // project's first selected persistence engine, if any — on top of the
 // in-memory one, which is always generated regardless (Decision #15).
 // bootstrap.Generate decides which one wire_gen.go actually uses.
-func generateRealPersistence(cfg *config.Config, file *sgoproto.File, p core.Paths, projectDir string) error {
+func generateRealPersistence(cfg *config.Config, file *sgoproto.File, fd protoreflect.FileDescriptor, p core.Paths, projectDir string) error {
 	if len(cfg.Persistence.Engines) == 0 {
 		return nil
 	}
@@ -139,10 +141,10 @@ func generateRealPersistence(cfg *config.Config, file *sgoproto.File, p core.Pat
 	switch {
 	case sqlgen.Supports(engine):
 		destDir := filepath.Join(projectDir, "internal", "infrastructure", "persistence", string(engine))
-		return sqlgen.Generate(engine, cfg.Persistence.Mode, file, p, destDir)
+		return sqlgen.Generate(engine, cfg.Persistence.Mode, file, fd, p, destDir)
 	case engine == config.PersistenceEngineMongo:
 		destDir := filepath.Join(projectDir, "internal", "infrastructure", "persistence", "mongo")
-		return mongogen.Generate(file, p, destDir)
+		return mongogen.Generate(file, fd, p, destDir)
 	default:
 		return fmt.Errorf("no persistence generator for engine %q", engine)
 	}

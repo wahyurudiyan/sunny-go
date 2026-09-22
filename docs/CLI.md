@@ -69,8 +69,10 @@ Compiles `contract/pb/user.proto` (via a pure-Go compiler — no `buf`/
   (`option (sgo.value_object) = true;`) and Domain Events (`option
   (sgo.domain_event) = true;`) — plus `repository.go` (the fixed
   `Create/Get/List/Update/Delete` port, typed directly against the
-  aggregate) and `errors.go`. `internal/domain/event/event.go` — the
-  shared `DomainEvent` interface every entity's events implement, so one
+  aggregate, plus one method per RPC marked `option
+  (sgo.repository_query) = true;` — see ARCHITECTURE §21) and
+  `errors.go`. `internal/domain/event/event.go` — the shared
+  `DomainEvent` interface every entity's events implement, so one
   `EventPublisher` can accept events from any of them
 - **Application layer** (`internal/application/user/`):
   `command_gen.go`/`query_gen.go` — DTOs derived from each RPC's request
@@ -91,13 +93,22 @@ Compiles `contract/pb/user.proto` (via a pure-Go compiler — no `buf`/
   `List*`→`GET`, `Update*`→`PUT .../{id}`, `Delete*`→`DELETE .../{id}` —
   see ARCHITECTURE §8.1/§20). `option (sgo.base_path) = "/v1";` on the
   service overrides the default `/api/v1` prefix for every route on it.
+  `option (sgo.hide_route) = true;` on an RPC skips HTTP route
+  registration for it entirely (its gRPC method, and its repository
+  counterpart if also marked `repository_query`, are unaffected — see
+  ARCHITECTURE §21).
 - A gRPC server adapter
   (`internal/infrastructure/transport/grpc/user_grpc_server_gen.go`)
   implementing the real protoc-gen-go-grpc server interface
 - A default in-memory repository
   (`internal/infrastructure/persistence/memory/user_repository_gen.go`)
   — always generated, so the service is runnable even with no
-  persistence engine selected
+  persistence engine selected. Auto-implements a `repository_query`
+  method as a linear scan when it takes exactly one scalar parameter
+  matching a domain field by name (e.g. `FindByEmail(ctx, email
+  string)`); anything it can't confidently map gets a
+  `panic("sgo: TODO implement ...")` stub in an owned companion file
+  (`user_repository.go`, next to the generated one) instead.
 - If `sgo.yaml` selects a persistence engine (`--db` at `sgo init`): the
   real repository adapter for it —
   `internal/infrastructure/persistence/<engine>/user_repository_gen.go`
@@ -106,6 +117,11 @@ Compiles `contract/pb/user.proto` (via a pure-Go compiler — no `buf`/
   MongoDB uses the official driver (no mode split). IDs are
   `google/uuid`-generated on every engine. `AutoMigrate` runs at startup
   so a fresh, empty database works without a separate migration step.
+  Every `repository_query` method gets a `panic("sgo: TODO implement
+  ...")` stub in the same kind of owned companion file the in-memory
+  adapter uses for what it can't auto-implement — a real engine's query
+  logic can never be auto-generated, since sgo has no way to know what
+  SQL/Mongo query a method like `FindByEmail` needs.
 - If `sgo.yaml` selects `redis`/`elasticsearch` (`--cache`/`--search` at
   `sgo init`): the `Cache`/`Search` ports
   (`internal/core/port/out/cache.go`/`search.go` — intentionally still

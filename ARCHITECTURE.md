@@ -811,7 +811,7 @@ annotated path binds every named parameter correctly, and a
 `(sgo.base_path)` override reaches both the annotated and
 convention-derived routes on the same service.
 
-## 21. Repository-port methods beyond fixed CRUD **(planned, Phase 16)**
+## 21. Repository-port methods beyond fixed CRUD **(done, Phase 16)**
 
 Verified live before writing any of this section, not assumed: adding
 an `ArchiveUser` RPC to a real generated project's proto and re-running
@@ -878,7 +878,7 @@ auto-generated — sgo has no way to know what SQL a `FindByEmail` needs.
 Each engine's adapter package gains a new *owned* companion file next
 to its existing generated one (`postgres/user_repository.go` beside
 `postgres/user_repository_gen.go`), using the exact append-only-new-
-stubs mechanism (Decision #12) `internal/core/service/<entity>_service.go`
+stubs mechanism (Decision #12) `internal/application/<entity>/service.go`
 already relies on — created once with a `panic("sgo: TODO implement
 FindByEmail")` stub, a hand-written implementation survives every later
 regeneration, and a newly added custom method gets a fresh stub
@@ -896,6 +896,26 @@ in the generated (not owned) memory adapter file. Anything it can't
 confidently map — more than one parameter, or no matching field — falls
 back to the same owned-stub pattern the real engines use, rather than
 guessing at a mapping that could silently return wrong data.
+
+**As implemented:** the name-stripping rule removes every occurrence of
+the entity's own name from the RPC name (not only a leading one), so
+`FindUserByEmail` on entity `User` becomes `FindByEmail` and
+`ArchiveUser` becomes `Archive`; an RPC name that doesn't mention the
+entity at all (e.g. `PurgeStale`) keeps its own name unchanged. A
+derived name that would collide with the port's fixed
+`Create`/`Get`/`List`/`Update`/`Delete` methods fails generation with a
+clear error naming the RPC, rather than producing a Go source file with
+a duplicate-method compile error days later. `GenerateRepositoryQueryStubs`
+(`internal/codegen/core/repository_query_stubs.go`) is the one shared
+helper `memgen`/`sqlgen`/`mongogen` all call for the owned-companion-file
+half of this — writing nothing, and creating no file, for an engine
+whose repository_query RPCs memgen could auto-implement in full.
+Proven end to end (`internal/codegen/generate_test.go`, plus each
+generator's own package suite): the domain port, the application
+service stub, and the in-memory auto-implementation all round-trip
+through a real `sgo init` → proto → `sgo generate code` → `go build`/
+`go run` project, and a hand-written owned-stub body survives a second
+`generate code` run the same way `service.go` already does.
 
 ## Testing strategy
 

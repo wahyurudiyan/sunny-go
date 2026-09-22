@@ -123,7 +123,7 @@ func ensureApplicationServiceMethods(path string, p Paths, receiver string, meth
 		names[i] = m.Name
 	}
 
-	return ensureGoMethods(path, receiver, p.Entity, names, func(name string) ([]byte, error) {
+	return ensureGoMethods(path, receiver, names, func(name string) ([]byte, error) {
 		m := byName[name]
 		return renderTemplate("templates/application_service_method_stub.go.tmpl", struct {
 			Receiver   string

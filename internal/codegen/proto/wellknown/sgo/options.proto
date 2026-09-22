@@ -16,7 +16,18 @@ package sgo;
 
 import "google/protobuf/descriptor.proto";
 
-option go_package = "github.com/wahyurudiyan/sunny-go/internal/codegen/proto/wellknown/sgo";
+// Public (not internal/) on purpose: a generated project's own proto
+// files import "sgo/options.proto", and protoc-gen-go's output for
+// them blank-imports whatever package this option names, to register
+// the extensions with the global proto registry (the same reason
+// buf/validate/validate.proto's own go_package — a real, publicly
+// resolvable module — already works from outside this repo). An
+// internal/ path here would make every generated project that uses
+// these options fail to build, since Go's own internal-package
+// visibility rule forbids importing an internal/ package from outside
+// its own module tree — caught by a real go build in this repo's own
+// test suite, not assumed.
+option go_package = "github.com/wahyurudiyan/sunny-go/pkg/sgoproto";
 
 extend google.protobuf.MessageOptions {
   // aggregate_root marks this message as a bounded context's Aggregate

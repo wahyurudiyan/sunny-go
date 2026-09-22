@@ -4,7 +4,7 @@
 // 	protoc        (unknown)
 // source: sgo/options.proto
 
-package sgo
+package sgoproto
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -91,7 +91,7 @@ const file_sgo_options_proto_rawDesc = "" +
 	"\fvalue_object\x12\x1f.google.protobuf.MessageOptions\x18҆\x03 \x01(\bR\vvalueObject:D\n" +
 	"\fdomain_event\x12\x1f.google.protobuf.MessageOptions\x18ӆ\x03 \x01(\bR\vdomainEvent::\n" +
 	"\acommand\x12\x1e.google.protobuf.MethodOptions\x18ц\x03 \x01(\bR\acommand:6\n" +
-	"\x05query\x12\x1e.google.protobuf.MethodOptions\x18҆\x03 \x01(\bR\x05queryBGZEgithub.com/wahyurudiyan/sunny-go/internal/codegen/proto/wellknown/sgob\x06proto3"
+	"\x05query\x12\x1e.google.protobuf.MethodOptions\x18҆\x03 \x01(\bR\x05queryB/Z-github.com/wahyurudiyan/sunny-go/pkg/sgoprotob\x06proto3"
 
 var file_sgo_options_proto_goTypes = []any{
 	(*descriptorpb.MessageOptions)(nil), // 0: google.protobuf.MessageOptions

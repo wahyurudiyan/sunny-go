@@ -7,7 +7,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 
-	sgopb "github.com/wahyurudiyan/sunny-go/internal/codegen/proto/wellknown/sgo"
+	sgopb "github.com/wahyurudiyan/sunny-go/pkg/sgoproto"
 )
 
 // messageOptions returns md's compiled MessageOptions as the real

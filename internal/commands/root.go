@@ -11,7 +11,7 @@ import (
 // Version is sgo's own release version (not to be confused with the
 // OpenAPI document version a generated project can select) — see
 // CHANGELOG.md. Bump this alongside a new CHANGELOG.md entry.
-const Version = "0.1.1"
+const Version = "0.1.0"
 
 var rootCmd = &cobra.Command{
 	Use:     "sgo",

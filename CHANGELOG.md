@@ -5,7 +5,7 @@ All notable changes to `sgo` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/).
 
-## [0.1.1] - 2026-09-22
+## [0.1.0] - 2026-09-22
 
 Replaces the generated architecture's hexagonal core with real DDD
 tactical patterns (aggregates, value objects, domain events, a CQRS
@@ -153,5 +153,5 @@ phase by phase per `PLAN.md`.
   Postgres and Redis are exercised against real local instances when
   available.
 
-[0.1.1]: https://github.com/wahyurudiyan/sunny-go/releases/tag/v0.1.1
+[0.1.0]: https://github.com/wahyurudiyan/sunny-go/releases/tag/v0.1.0
 [0.0.1]: https://github.com/wahyurudiyan/sunny-go/releases/tag/v0.0.1

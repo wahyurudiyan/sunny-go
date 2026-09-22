@@ -467,6 +467,577 @@ code: Python's `openapi-spec-validator` accepted the generated output
 for both version/format combinations by hand, in addition to the
 automated suite.
 
+## Phase 11 — Wizard TUI polish **(planned)**
+
+Small, self-contained, ships independently of Phases 12–16. Full design
+in ARCHITECTURE.md §14.
+
+Diagnosed by capturing `sgo init`'s wizard under a real pty and
+inspecting the rendered frames rather than guessing: `huh`'s `Confirm`
+field centers its Yes/No buttons under that field's own title text.
+"Enable Redis cache?" (19 chars) and "Enable Elasticsearch search?" (29
+chars) sit in the same group, so their buttons land at different
+horizontal offsets — the buttons visibly jump left-right between the
+two fields instead of lining up, which reads as "not tidy"/"position
+not proper".
+
+- [ ] Give every `huh.NewConfirm()` in the wizard the same fixed
+      `WithWidth` (or the group's own configured width) so all buttons
+      in a group anchor to the same column regardless of each
+      question's title length, instead of each one centering
+      independently.
+- [ ] Capture the wizard under a real pty again after the fix (same
+      method used to diagnose it) and confirm the button columns now
+      line up — a repeatable check, not just "looks right once".
+- [ ] A `wizard` Ginkgo spec asserting the rendered frame's button
+      column position is identical across every `Confirm` field in the
+      same group (regression guard, since this is exactly the kind of
+      thing that's easy to silently reintroduce by adding a new field
+      with a different-length title later).
+
+**Exit criteria:** every `Confirm` field's Yes/No buttons in the same
+wizard group render at the same horizontal position, verified against a
+real pty capture, with a spec catching a regression.
+
+## Phase 12 — Replace the generated architecture with DDD tactical patterns **(mostly done — shared kernel and GORM value-object embedding deferred, see Exit criteria)**
+
+**By far the largest, riskiest phase in this plan — larger than
+everything else in this batch combined.** Redefined from an earlier,
+much smaller "flatten the current layout, add a `layout:` override"
+version of this phase, per an explicit follow-up decision
+(`AskUserQuestion`): this isn't a directory rename any more. sgo's
+generated architecture moves from today's flat CRUD-hexagonal model
+(one struct per proto message, a fixed 5-method repository, no domain
+events, no invariant enforcement) to real DDD tactical patterns —
+aggregates that enforce invariants, value objects, domain events,
+CQRS-separated application services — **replacing the current default
+outright**, not as a selectable alternative alongside it. Full design
+in ARCHITECTURE.md §17.
+
+**Read this note if you only read one thing in this phase:** proto3
+has no native way to say "this message is an aggregate root with these
+invariants" — plain RPCs and messages don't carry that meaning by
+themselves. Getting from "proto file" to "real enforced business
+rules" needs *something* sgo can mechanically act on beyond today's
+message/field types. The concrete answer below is real, standards-based
+proto extensions (the same "vendor a real spec, don't invent one"
+principle already used for `google.api.http` and OpenAPI's meta-schemas)
+rather than a second hand-rolled modeling file — proto stays the only
+source of truth (§2/Decision #8's principle, unbroken). That's a
+specific technical proposal, not something the earlier `AskUserQuestion`
+round drilled into — flagged here explicitly for you to sanity-check
+before implementation starts, same as every other phase's design gets
+reviewed via this PR before code.
+
+Decided via `AskUserQuestion`: **full semantic upgrade**, not a cosmetic
+rename (real invariant enforcement, real event collection); **replaces
+the default outright**, no permanent dual-style selector; **event bus
+(Kafka/RabbitMQ/NATS) is explicitly deferred** — this phase builds the
+seam (an `EventPublisher` interface + a real no-op default), not a
+broker adapter, since a real pluggable message-bus system is its own
+undertaking and you mentioned having your own idea for that shape to
+bring later.
+
+### Vendored proto options + validation (the foundation everything else needs)
+
+- [x] **`sgo/options.proto`** (vendored, `go:embed`, pure-Go compiler
+      resolves it — no `protoc`/`buf` binary, same property Decision #5
+      already established): `MessageOptions` extensions
+      `(sgo.aggregate_root)`, `(sgo.value_object)`, `(sgo.domain_event)`;
+      `MethodOptions` extensions `(sgo.command)`/`(sgo.query)` (explicit
+      CQRS override when the naming convention below doesn't fit). This
+      file is now the *origin* of sgo's custom-options mechanism —
+      Phases 15/16 (`(sgo.base_path)`, `(sgo.repository_query)`,
+      `(sgo.hide_route)`) add fields to this same file rather than each
+      vendoring their own, and are resequenced after this phase so they
+      can (see Sequencing notes).
+- [x] **Vendor `buf/validate/validate.proto`** (protovalidate — the
+      modern, widely-adopted successor to `protoc-gen-validate`; CEL-
+      expression field/message constraints, e.g.
+      `option (buf.validate.field).string.min_len = 1;`) the same way,
+      plus a new direct dependency in a *generated project's* `go.mod`:
+      `github.com/bufbuild/protovalidate-go`. Real invariant enforcement
+      without sgo hand-rolling CEL evaluation itself — a generated
+      `Validate() error` method calls the real library against the
+      compiled descriptor's constraints.
+
+### Domain layer (`internal/domain/`)
+
+- [x] **Role inference**: within one proto file, the message marked
+      `(sgo.aggregate_root)` (or matching the entity name by the
+      existing convention, if none is explicitly marked) is the
+      Aggregate Root; a message marked `(sgo.value_object)` generates an
+      immutable Go type (no setters, constructor-validated); a message
+      marked `(sgo.domain_event)` generates a plain event struct in
+      `events.go`; anything else referenced by the aggregate becomes a
+      child Entity within it.
+- [x] **Generated sibling** (`<context>/<context>_gen.go`, same
+      generated/owned split principle as today, Decision #3): the flat
+      field struct (as today), plus new scaffolding — an internal
+      `events []DomainEvent` slice, a `PullEvents() []DomainEvent`
+      method, and a `Validate() error` method wired to protovalidate
+      against whatever `buf.validate` constraints the message declares.
+- [x] **Owned `aggregate.go`**, same contract as today's owned
+      `<entity>.go` (created once, never overwritten): this is where
+      real business methods and invariant-triggered event appends
+      actually get hand-written — sgo scaffolds the *mechanism*
+      (validation, event collection), not arbitrary business rules it
+      has no way to know.
+- [x] **`domain/<context>/repository.go`** — same port role as today's
+      repository port (and still open to Phase 16's
+      `(sgo.repository_query)` extension), now typed against the
+      aggregate root instead of a flat struct.
+- [x] **`domain/<context>/errors.go`** — sentinel errors, same as
+      today's port-level errors, relocated/renamed to match.
+- [ ] **Shared kernel** (`domain/shared/`): a value-object message
+      declared under `contract/pb/shared/*.proto` and `import`-ed by
+      multiple entity protos (e.g. `shared.Money` used by both `Order`
+      and `Invoice`) generates once into `internal/domain/shared/`,
+      not duplicated per context — the proto resolver already handles
+      cross-file imports (it resolves `google/protobuf/*` and, after
+      Phase 15, `google/api/*`); this extends the same resolution to a
+      project's own `contract/pb/shared/` imports. Idempotency matters
+      here specifically: regenerating two different entities that both
+      reference `shared.Money` must produce identical output, not a
+      conflict.
+
+### Application layer (`internal/application/`) — CQRS
+
+- [x] **`application/<context>/{command,query}.go`** — an RPC's request
+      message becomes a `<Rpc>Command` or `<Rpc>Query` DTO, classified
+      by the same naming convention HTTP routing already uses
+      (`Create`/`Update`/`Delete` → command, `Get`/`List` → query),
+      overridable per-RPC via `(sgo.command)`/`(sgo.query)` for anything
+      that doesn't fit — the same "convention with an explicit override"
+      shape Phase 15/16's options already use, kept consistent rather
+      than inventing a third pattern.
+- [x] **`application/<context>/service.go`** — replaces today's
+      `<entity>_service.go`; same owned-file, stub-appended-per-new-
+      command/query contract (Decision #12), but now actually
+      orchestrates: load the aggregate via the repository → call its
+      mutating method (which validates + collects events internally,
+      per the domain-layer scaffolding above) → save via the repository
+      → pull events and hand them to the `EventPublisher` seam. A real
+      behavioral upgrade over today's service, which calls the
+      repository directly with no aggregate/invariant/event step at
+      all.
+- [x] **`application/ports/event_publisher.go`** — the seam the future
+      messaging phase plugs into:
+      ```go
+      type EventPublisher interface {
+          Publish(ctx context.Context, events ...domain.Event) error
+      }
+      ```
+      Generated with one real, working default: a no-op implementation
+      wired into `wire_gen.go`. No `infrastructure/messaging/` package
+      in v1 — an empty placeholder directory with nothing generated
+      into it isn't something sgo does anywhere else, so it isn't
+      introduced here either; the interface alone is the extension
+      point.
+
+### Infrastructure layer (`internal/infrastructure/`)
+
+- [x] **`infrastructure/persistence/<engine>/`** — same generated
+      repository adapters as today (Postgres/MySQL/MongoDB/memory),
+      relocated, now implementing the aggregate-aware repository
+      interface. For SQL/GORM mode, a value object (e.g. `Money`) maps
+      via GORM's native embedded-struct support (`gorm:"embedded"`),
+      not a new mapping mechanism.
+- [x] **`infrastructure/transport/{http,grpc}/`** — same HTTP/gRPC
+      adapters as today, relocated; still map wire proto messages to
+      Command/Query DTOs and call the application service, same shape
+      as before under new names.
+- [x] **`infrastructure/bootstrap/wire_gen.go`** — same composition-root
+      role as today's `internal/bootstrap/wire_gen.go`, relocated under
+      `infrastructure/` to fit the new three-layer top level; now also
+      wires the no-op `EventPublisher`.
+- [x] **No `infrastructure/clients/`** in v1 — the reference structure's
+      outbound-API-client convention (its `Stripe` example) has nothing
+      concrete behind it in sgo today; an empty placeholder directory
+      isn't generated for the same reason `messaging/` isn't.
+- [x] **`internal/adapter/mapper/`** → relocated, but to
+      `infrastructure/transport/<entity>_mapper_gen.go` (one shared
+      package, entity-prefixed files — the pre-Phase-12 `mapper/`
+      package's own convention), **not** to a `mapper.go` per
+      persistence engine as originally planned here. The old mapper's
+      only real caller was the gRPC adapter's wire↔domain conversion,
+      never persistence — sqlgen/mongogen/memgen already map straight
+      between the domain aggregate and their own engine-specific
+      row/document model inline in their own templates, no shared
+      mapper package involved on the persistence side at all. Placing
+      it under `persistence/<engine>/` would have been placing it next
+      to the one adapter family that doesn't use it. `GenerateInfraMapper`
+      also grew a wire↔application direction (`<Msg>ToApp`, for the
+      gRPC adapter's own request-side mapping), which this plan didn't
+      anticipate — the HTTP adapter needs no such conversion, since it
+      binds JSON straight into the application DTO.
+
+### Everything downstream
+
+- [x] `cmd/<name>/main.go` unchanged in role (owned, thin, calls
+      `infrastructure/bootstrap`) — the reference structure's own
+      comment agrees ("Wire dependencies & boot adapters").
+- [x] Updated docs/CLI.md, README.md, and every e2e spec's path/content
+      assertion across `internal/codegen` and `internal/commands`
+      (including the real running-server HTTP test and the real
+      compiled-binary CLI e2e test) to the new layout — all green.
+      ARCHITECTURE.md §3 (the directory tree), §2 (the "hexagonal core"
+      overview bullet), and §4 (the workflow's generator list) are
+      updated; §5/§8's prose wasn't fully re-audited line by line — real
+      remaining doc-drift risk, not verified clean.
+- [ ] Ginkgo specs, by sub-area above: role inference (aggregate root /
+      value object / domain event classification, including the
+      convention fallback when nothing's explicitly marked) — **done**;
+      protovalidate wiring (a violated constraint actually fails
+      `Validate()`, generated against a real vendored constraint, not a
+      hand-rolled check) — **done**, both in isolation and through a
+      real `go run` exercising acceptance/rejection; event collection
+      (`PullEvents` actually returns what an owned aggregate method
+      appended, and is called by the generated application service) —
+      **not done**: nothing in this batch's specs calls an owned
+      aggregate method that appends an event and asserts `PullEvents`
+      sees it, or that the application service pulls and publishes them
+      — the mechanism (the `events []DomainEvent` slice + `PullEvents`)
+      is generated and compiles, but its actual use is unexercised; the
+      shared-kernel dedup case — **not done**, the shared kernel itself
+      is deferred (see below); GORM embedded-value-object round-tripping
+      against a real local Postgres, same standard
+      the existing persistence suites already hold adapters to — **not
+      done**: sqlgen still maps every field as its own flat column, the
+      same as before this phase; it was never changed to give a value
+      object GORM's native embedded-struct treatment, so there's nothing
+      here for a spec to exercise yet; a full CLI e2e spec through the
+      new layout end to end — **done** (`internal/commands/e2e_test.go`).
+
+**Exit criteria:** a freshly generated project has the
+`domain/application/infrastructure` layout above — **met**; an
+aggregate's generated `Validate()` actually rejects data violating a
+real `buf.validate` constraint — **met**, exercised through a real
+`go run`, not just a content assertion; a hand-written aggregate
+method's appended event is retrievable via `PullEvents()` and reaches
+the no-op `EventPublisher` — **not met**: the mechanism is generated and
+compiles, but nothing exercises an owned method actually appending an
+event and the application service actually publishing it; a shared
+value object referenced by two entities generates once, not twice —
+**not met**, the shared kernel is deferred (task tracked separately,
+unchanged from the earlier explicit `AskUserQuestion` deferral this
+phase's intro already notes); the full e2e suite (init → generate proto
+→ hand edit → generate code → `go build`) passes against the new
+architecture end to end — **met**.
+
+**Known, documented limitation carried over unchanged:** this
+architecture is chosen once, at `sgo init` time (there's no reason to
+think a later `layout:`-style override wouldn't hit the exact same
+already-generated-files problem the earlier version of this phase
+flagged — logged in Non-goals below, not solved by this phase either).
+
+## Phase 13 — `sgo list endpoints` **(done)**
+
+Small, independent of Phases 12/14/15 — ships fast, gets more useful
+once Phase 15 lands proto-defined paths but doesn't depend on it. Full
+design in ARCHITECTURE.md §16.
+
+- [x] `sgo list endpoints [<service>]` — prints every HTTP route
+      currently derived for the project's registered services (all of
+      them with no argument, one with it): method, path, and which
+      RPC/service it comes from. Reuses
+      `internal/codegen/httpgen.BuildRoutes` directly — the exact same
+      route list `sgo generate openapi` already turns into
+      `docs/openapi.<ext>` and the generated `*_routes_gen.go` actually
+      registers, not a second derivation.
+- [x] Ginkgo specs (content per framework selection) plus a CLI e2e spec
+      asserting the printed table matches the generated route file's own
+      registrations, same cross-check `openapigen/generate_test.go`
+      already does for the OpenAPI document.
+
+**Exit criteria:** `sgo list endpoints` on a project with generated
+services prints exactly the routes the generated HTTP adapter actually
+registers — verified against the generated route file, not just
+`BuildRoutes`'s own output a second time.
+
+## Phase 14 — OpenAPI discoverability + a live Swagger/Redoc UI **(done)**
+
+Full design in ARCHITECTURE.md §17. `sgo generate openapi` and `sgo
+openapi validate` already exist (Phase 8) — this phase covers both
+halves of what was actually missing: nothing in the terminal points you
+at them, and there's no way to *browse* the generated document short of
+opening the raw YAML/JSON.
+
+- [x] **Discoverability** — `sgo generate code` prints a "Next steps"
+      hint mentioning `sgo generate openapi` once a service exists, the
+      same way `sgo init` already prints one for `sgo generate proto`;
+      README's status line and quick start call it out explicitly
+      (partly done already, finish the rest).
+- [x] **`sgo openapi ui [--port 4749]`** — serves the project's
+      generated `docs/openapi.<ext>` through an embedded interactive API
+      doc viewer at `http://127.0.0.1:<port>` (same `127.0.0.1`-only, no
+      auth stance as `sgo ui`/`sgo run --debug`, §11/§15). Reads
+      whatever's already on disk — same "run `sgo generate openapi`
+      first if it doesn't exist yet" UX `sgo openapi validate` already
+      has, not auto-regenerating on every request.
+- [x] Vendor a specific pinned version of a standalone doc-viewer bundle
+      (evaluating Redoc's single-file standalone build against
+      `swagger-ui-dist`'s multi-file one — whichever is smaller wins,
+      same self-contained-by-default stance as the vendored OpenAPI
+      meta-schemas in Phase 8) via `go:embed`, not a CDN `<script>` tag —
+      works offline, consistent with every other "no external dependency
+      at runtime" choice this project has made (pure-Go proto compiler,
+      pre-installed browser in dev, vendored meta-schemas).
+- [x] Ginkgo specs (`internal/openapiui`'s own `httptest`-based content
+      specs, plus a real CLI e2e spec in `internal/commands` that starts
+      the actual compiled binary as a background process and drives it
+      over a real socket) plus a real-browser Playwright pass confirming
+      the page actually renders the project's real paths — same standard
+      `sgo ui` and the Phase 10 dashboard were held to. The Playwright
+      pass was a manual one-off verification (screenshotted, not
+      committed as an automated test), the same as task-list item
+      "Manually verify sgo ui in a real browser" was for `sgo ui` itself
+      — not part of `go test ./...`.
+
+**Exit criteria:** `sgo generate code` visibly points at `sgo generate
+openapi`; `sgo openapi ui` on a project with a generated doc serves a
+real interactive viewer showing that project's actual endpoints,
+verified in a real browser, no internet access required.
+
+## Phase 15 — Proto-defined HTTP paths (`google.api.http`) + root path **(done)**
+
+The riskiest and most novel piece of this batch — resolves the
+`google.api.http` open question ARCHITECTURE.md §12/Decision #14 already
+flagged as "a possible future upgrade if the convention-based routing
+proves too rigid," rather than reversing that decision outright. Full
+design in ARCHITECTURE.md §18. Decided via `AskUserQuestion` before any
+code: **annotations are an optional override, not a replacement** — an
+RPC with no `google.api.http` option keeps today's naming-convention
+routing (`Create*`→`POST`, etc., §8.1); one with the option uses it
+instead. Every existing generated project keeps working unchanged.
+
+- [x] **Vendor `google/api/http.proto` + `google/api/annotations.proto`**
+      (small, Apache-2.0, just the extension/option definitions — not
+      the whole `googleapis` tree) so `sgo generate proto`-authored files
+      can `import "google/api/annotations.proto";` and the pure-Go
+      compiler (`bufbuild/protocompile`, Decision #5) can resolve that
+      import from the vendored copy without a `protoc`/`buf` binary or
+      network access — preserves the property Decision #5 already
+      established, doesn't reopen it.
+- [x] **`sgo`'s own `base_path` service option** — `google.api.http` has
+      no concept of a service-level path prefix, only per-method rules,
+      so a root path needs sgo's own small option:
+      `option (sgo.base_path) = "/v1";` on the service (a proto
+      extension in the 50000–99999 organization-reserved range) — a new
+      field on `sgo/options.proto`, the same vendored file Phase 12
+      already introduces for its own domain-modeling options
+      (`(sgo.aggregate_root)` etc.), not a second vendored file. Applies
+      to every route on that service, annotation-derived or
+      convention-derived — replacing today's hardcoded `/api/v1` prefix
+      (§8.1) with this as the default when unset, so nothing changes for
+      a proto that doesn't opt in. (As implemented: an annotation-derived
+      route only gets the prefix when `base_path` is explicitly set,
+      since `google.api.http` paths are meant to already be complete —
+      unconditionally prepending the default would double-prefix them.)
+- [x] **`internal/codegen/httpgen.BuildRoutes`** — for each RPC, check
+      for a `google.api.http` option first (method/path from
+      `get`/`post`/`put`/`delete`/`patch`, path parameters from `{name}`
+      bindings, request body from the `body` field); fall back to
+      today's naming-convention derivation when absent. Path parameters
+      translate to each framework's own syntax (Gin/Echo `:name`, Chi
+      `{name}`) same as the existing `{id}` handling already does — not
+      limited to a field literally named `id` any more, resolving the
+      other open question §12 already flagged alongside this one. v1
+      states, rather than silently mishandles, what it doesn't cover: a
+      `custom` (non-verb) pattern, a wildcard segment, a
+      `{name=sub/pattern}` variable, a dotted field path, a path
+      parameter bound to a non-scalar field, and `body:"<field>"` each
+      reject with a clear error instead of guessing at a mapping.
+- [x] `sgo generate openapi` and `sgo list endpoints` (Phase 13) need no
+      changes at all — both already just consume `BuildRoutes`'s output,
+      so proto-defined paths show up in generated OpenAPI docs and
+      `sgo list endpoints` for free once `BuildRoutes` itself understands
+      them. Confirmed: neither needed any code change beyond the
+      mechanical `PathParams`-loop generalization `BuildRoutes`'s own
+      signature change required.
+- [x] Ginkgo specs: a proto with an explicit `google.api.http` option
+      generates the annotated route, not the convention-derived one; a
+      proto without one is byte-identical to today's output (regression
+      guard that the override really is optional); path-parameter
+      translation per framework; the `base_path` override; plus a real
+      end-to-end spec (`httpgen/annotated_e2e_test.go`) building a real
+      project from an annotated proto, binding two independent path
+      parameters on one route, and hitting the actual generated route
+      over a real socket, same standard the HTTP CRUD e2e suite (Phase
+      3/4) already holds generated adapters to. Ten focused specs
+      (`httpgen/route_test.go`) cover every v1 constraint's rejection
+      path individually.
+
+**Exit criteria:** an RPC with a `google.api.http` option gets exactly
+that route; one without keeps today's convention-derived route,
+unchanged; a service with `(sgo.base_path)` set gets that prefix instead
+of the default `/api/v1`; every existing generated-project e2e spec
+still passes with no proto changes. All met — full repo suite green,
+`gofmt`/`go vet` clean.
+
+## Phase 16 — Repository-port methods beyond fixed CRUD **(done)**
+
+Full design in ARCHITECTURE.md §21. Closes a real gap in the safe-
+regeneration story (§6): the usecase port (`internal/core/port/in/
+<entity>_usecase.go`, pre-Phase-12; now `internal/application/<entity>/
+service.go`) already grows a new method for free when you add an RPC to
+the proto and re-run `sgo generate code` — verified live against a real
+generated project before writing this: adding an `ArchiveUser` RPC
+produced `ArchiveUser` on the usecase interface and appended a matching
+stub to the owned `user_service.go`, with the hand-written `CreateUser`
+body untouched. But the repository port (`internal/core/port/out/
+<entity>_repository.go`, pre-Phase-12; now `internal/domain/<entity>/
+repository.go`) is *permanently* fixed at `Create/Get/List/Update/Delete`
+(Decision #11) — adding `ArchiveUser` to the proto left it exactly as it
+was. There is currently no supported way to add a repository method like
+`FindByEmail(ctx, email string) (*User, error)`; hand-editing the
+generated file works until the next `generate code` run silently
+reverts it, since nothing protects it the way owned files are
+protected.
+
+Two decisions locked in via `AskUserQuestion` before any code:
+**declaration is an option on an existing RPC**, not a new proto
+convention for method signatures outside the service's RPC list — reuses
+the RPC's own Request/Response message types rather than inventing a
+second way to express a typed method signature. And **the in-memory
+adapter auto-implements simple cases** (a single-field equality query
+becomes a generated linear scan) rather than requiring a hand-written
+stub everywhere, keeping local dev fully runnable with zero manual
+adapter edits for the common case — the same "always runnable" promise
+Decision #15 already makes for the fixed CRUD set.
+
+- [x] **`option (sgo.repository_query) = true;`** on an RPC method —
+      another field on the same vendored `sgo/options.proto` Phase 12
+      introduces (extended by Phase 15 for `(sgo.base_path)`), not a
+      third vendored file. A `MethodOptions` extension. Marks that RPC
+      as *also* needing
+      a repository-port counterpart, generated alongside its usual
+      application-service method, HTTP route, and gRPC method — by
+      design, per the decision above, this makes the RPC both a public
+      endpoint and a repository method, not repository-only.
+- [x] **`option (sgo.hide_route) = true;`** — a second, independent
+      option on the same RPC that skips HTTP route registration for it
+      (still generates the gRPC method and, if also marked
+      `repository_query`, the repository counterpart). Cheap once the
+      options-plumbing from the first bullet exists, and closes the
+      "now it's forced to be a public HTTP endpoint too" tradeoff the
+      `AskUserQuestion` answer explicitly accepted — worth having rather
+      than leaving that as a flat limitation.
+- [x] **Repository port generation** — for an RPC marked
+      `repository_query`, derive the method name by removing every
+      occurrence of the entity name from the RPC name (`FindUserByEmail`
+      on entity `User` → `FindByEmail`; `ArchiveUser` → `Archive`),
+      otherwise keep the RPC name as-is (`PurgeStale` stays `PurgeStale`).
+      Parameters come from the request message's fields, flattened to
+      individual scalar Go parameters in declaration order (matching
+      `Get(ctx, id string)`'s existing style, not the application
+      service's opaque `*Request` style) — **v1 constraint, stated
+      plainly rather than silently unsupported**: every request field
+      must be a scalar (no nested messages, no repeated fields); one
+      that isn't fails generation with a clear error instead of guessing
+      how to flatten it. A derived name colliding with the port's fixed
+      `Create`/`Get`/`List`/`Update`/`Delete` methods is also rejected
+      with a clear error, rather than surfacing as a confusing duplicate-
+      method Go compiler error later. Return type: v1 only supports the
+      single-entity shape (`*User, error`, the same shape `Get` already
+      returns) — a list-shaped response (pagination) isn't supported
+      yet, logged as a Non-goal below.
+- [x] **Real persistence engines (Postgres/MySQL/MongoDB)** — each
+      engine's adapter package gains a new *owned* companion file
+      alongside its existing generated one (e.g. `postgres/
+      user_repository.go` next to `postgres/user_repository_gen.go`),
+      created once with a `panic("sgo: TODO implement FindByEmail")`
+      stub per custom method, using the *exact same* append-only-new-
+      stubs mechanism (Decision #12) already proven for
+      `internal/application/<entity>/service.go` — a hand-written
+      implementation survives every later `generate code` run, and a
+      newly added custom method gets a fresh stub appended without
+      touching what's already there. Implemented as one shared helper
+      (`core.GenerateRepositoryQueryStubs`) all three generators call,
+      not three separate implementations.
+- [x] **In-memory adapter** — auto-implements a custom method when its
+      signature is exactly one scalar parameter whose name
+      case-insensitively matches an exported field on the domain entity
+      (`email string` → `Email` field): generates a linear scan
+      (`for _, e := range r.data { if e.Email == email { ... } }`)
+      directly in the generated (not owned) memory adapter file, no
+      hand-editing needed. Falls back to the same stub-in-an-owned-file
+      pattern the real engines use when it can't confidently infer the
+      mapping (more than one parameter, or no matching field) — fails
+      toward "you write it," never toward a guess that silently returns
+      wrong data.
+- [x] Ginkgo specs: option parsing (a marked RPC produces the expected
+      repository method; an unmarked one doesn't); the scalar-field and
+      name-collision rejections with a clear error; the name-stripping
+      rule (prefix, interior, and no-match cases); a full generate-code
+      run per persistence engine (memgen/sqlgen/mongogen package suites,
+      plus a real `sgo init` → proto → `sgo generate code` → `go build`/
+      `go run` round-trip in `internal/codegen/generate_test.go`)
+      asserting the owned stub file's existence and content on first
+      generation, then that a hand-written implementation survives a
+      second run (the two-survives-regeneration pattern already used
+      throughout `internal/codegen`'s existing suites); the in-memory
+      auto-implementation actually returning the right entity for a
+      simple case, and correctly falling back to a stub for a
+      multi-parameter one; `hide_route` actually suppressing the HTTP
+      route while leaving the rest of the service unaffected.
+
+**Exit criteria:** an RPC marked `(sgo.repository_query)` produces a
+matching method on the repository port; a hand-written implementation
+in each real engine's owned companion file survives regeneration, the
+same way `service.go` already does; the in-memory adapter answers a
+simple single-field query correctly with zero hand-editing; an RPC
+additionally marked `(sgo.hide_route)` gets no HTTP route but keeps its
+gRPC method and repository counterpart; every existing generated-project
+e2e spec still passes with no proto changes. All met — full repo suite
+green, `gofmt`/`go vet` clean.
+
+## Phase 17 — Docs: README as a getting-started guide, CONTRIBUTING.md **(done)**
+
+Deliberately last in this batch — it should describe the layout,
+commands, and proto conventions Phases 11–16 actually land with, not
+what's true today. Mechanical relative to the rest of this batch.
+
+- [x] **README.md** restructured into a fuller guide: overview, install,
+      getting started/quick start, full command reference pointer
+      (`docs/CLI.md`), architecture pointer (`ARCHITECTURE.md`), FAQ/
+      troubleshooting section if anything recurring surfaced by then.
+      Still the repo's actual `README.md` (GitHub renders it on the repo
+      homepage) — "as a wiki" means comprehensive and navigable, not a
+      literal GitHub Wiki, which is a separate, harder-to-review,
+      harder-to-PR surface than a file already in the repo. Landed with
+      a table of contents plus dedicated sections on the generated-vs-
+      owned file split, the `sgo.*`/`google.api.http` proto option
+      reference (table + worked example), HTTP routing, repository
+      queries beyond CRUD, persistence/cache/search, OpenAPI, the web
+      UI, and a project-layout tree captured from a real `sgo init` +
+      `generate proto` + `generate code` run rather than hand-typed.
+- [x] **`CONTRIBUTING.md`** — the existing "Contributing / development"
+      section moved out of README.md into its own file (standard
+      GitHub convention: `CONTRIBUTING.md`, not `CONTRIBUTE.md` — GitHub
+      links to it automatically from the "Contributing" prompt on a new
+      issue/PR when it's named this way), expanded with the phase-based
+      workflow this project actually uses (plan → `AskUserQuestion` →
+      PLAN.md/ARCHITECTURE.md → implement → PR, not merged by the author)
+      so an outside contributor understands the process before opening
+      one.
+- [x] Cross-check every command/path mentioned in both files against
+      `docs/CLI.md` and the current generated layout — this phase is the
+      one place drift between "what the docs say" and "what `sgo`
+      actually does" gets caught for this whole batch. Caught and fixed
+      along the way: `docs/CLI.md`'s `sgo init` flags table was missing
+      `--openapi-version`/`--openapi-format`; the required Go version
+      (1.25 → 1.26, bumped during Phase 15) was stale in the old README.
+
+**Exit criteria:** README.md covers overview → install → getting started
+end to end without needing `ARCHITECTURE.md`/`docs/CLI.md` open
+side-by-side for a first-time user; `CONTRIBUTING.md` exists and is
+what GitHub links to from a new issue/PR; nothing in either file
+contradicts `docs/CLI.md` or the actual current layout. All met — every
+path/tree in the new README was captured from a real generated project,
+and the two docs-drift bugs found while cross-checking were fixed, not
+just noted.
+
 ## Non-goals (for now)
 
 - Multi-service monorepo orchestration beyond one `sgo.yaml` per repo.
@@ -481,6 +1052,44 @@ automated suite.
   supplied OpenAPI spec (contract testing) — the Phase 8 checker
   validates a document's own well-formedness, not code-vs-spec
   consistency. Revisit only if requested.
+- **Changing the generated architecture after a project already
+  exists** — Phase 12's DDD structure is chosen once, at `sgo init`
+  time, same as HTTP framework or persistence engine already are; safe
+  regeneration (§6) finds owned files at their *current* expected path
+  and shape, so retargeting that for an already-generated project needs
+  a real migration this phase doesn't build.
+- **A selectable architecture style (DDD vs. today's simpler
+  hexagonal)** — explicitly decided against (`AskUserQuestion`): Phase
+  12 replaces the default outright, it doesn't add a second option
+  alongside it. Revisit only if a real need for the simpler shape
+  resurfaces.
+- **A real event-bus/message-broker adapter** (Kafka/RabbitMQ/NATS) —
+  explicitly deferred (`AskUserQuestion`): Phase 12 builds the
+  `EventPublisher` seam and a working no-op default, not a broker
+  integration. Revisit once there's a concrete design for it (mentioned
+  as a separate idea to bring later).
+- **`infrastructure/clients/`** (outbound third-party API clients, e.g.
+  a Stripe client) — nothing in sgo today generates an outbound API
+  client of any kind; an empty placeholder directory isn't generated
+  for a capability that doesn't exist yet, consistent with the same
+  reasoning for `infrastructure/messaging/` above.
+- A generic templating/plugin system for arbitrary custom generators —
+  Phase 12 changes *what* sgo's fixed set of generators produce and
+  *where* it lands, it doesn't let someone add a wholly new kind of
+  generated file of their own design. Nobody's asked for that yet.
+- A repository-only method that never becomes a public RPC — Phase 16's
+  declaration mechanism is deliberately an option on an existing RPC
+  (`AskUserQuestion`-confirmed), which always keeps that RPC's
+  application-service method, and its gRPC method unless a fundamentally
+  different mechanism is built later; `(sgo.hide_route)` only suppresses
+  the HTTP route, not the whole public surface. Revisit if a genuinely
+  internal-only query (no gRPC exposure either) turns out to be needed.
+- A custom repository method whose request message has a nested-message
+  field, or whose response is list-shaped (pagination) — Phase 16 only
+  flattens scalar request fields and only supports the existing single-
+  entity response wrapper shape (`Get`/`Create`/`Update`'s convention).
+  Both fail generation with a clear error rather than guessing. Revisit
+  if a real use case needs either.
 
 ## Sequencing notes
 
@@ -499,3 +1108,36 @@ automated suite.
   different story — once `sgo generate`/adapters exist, a dashboard
   showing their status is more useful, so it stays put unless the web UI
   becomes the priority over Phases 2–4 for some other reason.
+- Phase 11 (wizard polish) ships first in this batch — small, and
+  entirely independent of 12–17.
+- **Phase 12 (DDD architecture replacement) is now by a wide margin the
+  riskiest, largest, and most foundational piece of this entire batch —
+  larger than Phases 13–17 combined.** It touches every generator
+  package that writes a file, same reasoning the original layout-only
+  version of this phase had, but now also introduces the vendored
+  `sgo/options.proto` custom-options mechanism Phases 15 and 16 both
+  build on (`(sgo.base_path)`, `(sgo.repository_query)`,
+  `(sgo.hide_route)` all become fields on the file Phase 12 vendors,
+  not separately vendored). Sequenced right after Phase 11 and before
+  everything else for both reasons at once: Phases 13–16 consume paths
+  Phase 12 changes, and Phases 15/16 consume options infrastructure
+  Phase 12 introduces — building either on top of a Phase 12 that
+  hasn't landed yet would mean redoing work.
+- Phases 13 and 14 are independent of each other and of Phase 15;
+  sequenced 13-then-14 only because `sgo list endpoints` is the smaller
+  of the two.
+- Phase 15 (proto-defined HTTP paths) depends on nothing *functionally*
+  in this batch beyond Phase 12's options mechanism, but is sequenced
+  after 12–14 anyway: it's the second-largest, most novel piece here
+  (a second vendored proto extension, per-framework path-parameter
+  translation), and Phases 13/14 are more useful to have landed first
+  since Phase 15 makes both of them richer for free (proto-defined
+  routes show up in `sgo list endpoints` and generated OpenAPI docs
+  without either needing changes) rather than the reverse.
+- Phase 16 (repository-port methods) is sequenced right after Phase 15
+  for the same options-file reason Phase 12 documents above — one
+  vendored file, extended twice, not vendored three times.
+- Phase 17 (docs) is deliberately last — it documents the architecture,
+  commands, and proto conventions Phases 11–16 land with, not a
+  snapshot from partway through. Given how much Phase 12 alone changes,
+  this phase is doing real work here, not a light touch-up.

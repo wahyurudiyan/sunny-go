@@ -67,16 +67,19 @@ var _ = Describe("GenerateCode", func() {
 		for _, f := range []string{
 			filepath.Join("contract", "gen", "user", "user.pb.go"),
 			filepath.Join("contract", "gen", "user", "user_grpc.pb.go"),
-			filepath.Join("internal", "core", "domain", "user", "user_gen.go"),
-			filepath.Join("internal", "core", "domain", "user", "user.go"),
-			filepath.Join("internal", "core", "port", "in", "user_usecase.go"),
-			filepath.Join("internal", "core", "port", "out", "user_repository.go"),
-			filepath.Join("internal", "core", "service", "user_service.go"),
-			filepath.Join("internal", "adapter", "mapper", "user_mapper_gen.go"),
-			filepath.Join("internal", "adapter", "in", "http", "gin", "user_routes_gen.go"),
-			filepath.Join("internal", "adapter", "in", "grpc", "user_grpc_server_gen.go"),
-			filepath.Join("internal", "adapter", "out", "persistence", "memory", "user_repository_gen.go"),
-			filepath.Join("internal", "bootstrap", "wire_gen.go"),
+			filepath.Join("internal", "domain", "event", "event.go"),
+			filepath.Join("internal", "domain", "user", "user_gen.go"),
+			filepath.Join("internal", "domain", "user", "aggregate.go"),
+			filepath.Join("internal", "domain", "user", "repository.go"),
+			filepath.Join("internal", "domain", "user", "errors.go"),
+			filepath.Join("internal", "application", "user", "command_gen.go"),
+			filepath.Join("internal", "application", "ports", "event_publisher.go"),
+			filepath.Join("internal", "application", "user", "service.go"),
+			filepath.Join("internal", "infrastructure", "transport", "user_mapper_gen.go"),
+			filepath.Join("internal", "infrastructure", "transport", "http", "gin", "user_routes_gen.go"),
+			filepath.Join("internal", "infrastructure", "transport", "grpc", "user_grpc_server_gen.go"),
+			filepath.Join("internal", "infrastructure", "persistence", "memory", "user_repository_gen.go"),
+			filepath.Join("internal", "infrastructure", "bootstrap", "wire_gen.go"),
 		} {
 			Expect(filepath.Join(dir, f)).To(BeAnExistingFile(), f)
 		}
@@ -125,16 +128,12 @@ var _ = Describe("GenerateCode", func() {
 
 		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
 
-		servicePath := filepath.Join(dir, "internal", "core", "service", "user_service.go")
+		servicePath := filepath.Join(dir, "internal", "application", "user", "service.go")
 		content, err := os.ReadFile(servicePath)
 		Expect(err).NotTo(HaveOccurred())
 		stub := `panic("sgo: TODO implement GetUser")`
 		Expect(string(content)).To(ContainSubstring(stub))
-		body := `u, err := s.repo.Get(ctx, req.Id)
-			if err != nil {
-				return nil, err
-			}
-			return &user.UserResponse{User: u}, nil`
+		body := `return s.repo.Get(ctx, req.Id)`
 		updated := strings.Replace(string(content), stub, body, 1)
 		Expect(os.WriteFile(servicePath, []byte(updated), 0644)).To(Succeed())
 
@@ -220,8 +219,8 @@ var _ = Describe("GenerateCode with cache, search, and Mongo selected", func() {
 		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
 
 		for _, f := range []string{
-			filepath.Join("internal", "adapter", "out", "persistence", "mongo", "user_repository_gen.go"),
-			filepath.Join("internal", "adapter", "out", "persistence", "mongo", "conn_gen.go"),
+			filepath.Join("internal", "infrastructure", "persistence", "mongo", "user_repository_gen.go"),
+			filepath.Join("internal", "infrastructure", "persistence", "mongo", "conn_gen.go"),
 		} {
 			Expect(filepath.Join(dir, f)).To(BeAnExistingFile(), f)
 		}
@@ -233,60 +232,198 @@ var _ = Describe("GenerateCode with cache, search, and Mongo selected", func() {
 	})
 })
 
-const userServiceImplementation = `package service
+// Covers PLAN.md Phase 16 (ARCHITECTURE.md §21) end to end through the
+// real orchestrator: a proto with a `(sgo.repository_query)`-marked RPC
+// grows a matching method on the domain repository port, the in-memory
+// adapter auto-implements it (single scalar parameter matching a field),
+// and the whole project still builds — the same standard every other
+// GenerateCode spec in this file holds generated code to.
+var _ = Describe("GenerateCode with a repository_query RPC", func() {
+	const repositoryQueryUserProto = `syntax = "proto3";
+
+package user.v1;
+
+import "sgo/options.proto";
+
+option go_package = "demo/contract/gen/user";
+
+service UserService {
+  rpc CreateUser(CreateUserRequest) returns (UserResponse);
+  rpc GetUser(GetUserRequest) returns (UserResponse);
+
+  rpc FindUserByEmail(FindUserByEmailRequest) returns (UserResponse) {
+    option (sgo.repository_query) = true;
+  }
+}
+
+message User {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+}
+
+message CreateUserRequest {
+  string name = 1;
+  string email = 2;
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message FindUserByEmailRequest {
+  string email = 1;
+}
+
+message UserResponse {
+  User user = 1;
+}
+`
+
+	var (
+		root, dir string
+	)
+
+	BeforeEach(func() {
+		var err error
+		root, err = os.MkdirTemp("", "sgo-codegen-repository-query-test-*")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(os.RemoveAll(root)).To(Succeed()) })
+
+		dir = filepath.Join(root, "demo")
+		Expect(project.Scaffold(dir, project.Options{
+			Name:          "demo",
+			Module:        "demo",
+			HTTPFramework: config.HTTPFrameworkGin,
+		})).To(Succeed())
+
+		protoDir := filepath.Join(dir, "contract", "pb")
+		Expect(os.WriteFile(filepath.Join(protoDir, "user.proto"), []byte(repositoryQueryUserProto), 0644)).To(Succeed())
+
+		// Unlike GenerateStub's default proto, this one imports
+		// "sgo/options.proto" for (sgo.repository_query) — so the
+		// generated contract/gen/user/user.pb.go now really does import
+		// github.com/wahyurudiyan/sunny-go/pkg/sgoproto, same as any real
+		// generated project using this option would. This dev checkout's
+		// working tree is ahead of what's pushed, so a replace directive
+		// points `go mod tidy` (run internally by codegen.GenerateCode)
+		// at the local checkout instead of the stale remote — purely a
+		// test-harness accommodation for in-flight development, the same
+		// one core/infra_mapper_test.go and httpgen/annotated_e2e_test.go
+		// already use.
+		repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+		Expect(err).NotTo(HaveOccurred())
+		goMod := "module demo\n\ngo 1.26.0\n\nrequire github.com/wahyurudiyan/sunny-go v0.0.0-00010101000000-000000000000\n\nreplace github.com/wahyurudiyan/sunny-go => " + repoRoot + "\n"
+		Expect(os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644)).To(Succeed())
+	})
+
+	It("grows the domain repository port and auto-implements the query in-memory, and the project builds and runs it correctly", func() {
+		cfg, err := config.Load(dir)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
+
+		repoContent, err := os.ReadFile(filepath.Join(dir, "internal", "domain", "user", "repository.go"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(repoContent)).To(ContainSubstring("FindByEmail(ctx context.Context, email string) (*User, error)"))
+
+		memContent, err := os.ReadFile(filepath.Join(dir, "internal", "infrastructure", "persistence", "memory", "user_repository_gen.go"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(memContent)).To(ContainSubstring("func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*user.User, error)"))
+
+		servicePath := filepath.Join(dir, "internal", "application", "user", "service.go")
+		serviceContent, err := os.ReadFile(servicePath)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(serviceContent)).To(ContainSubstring(`panic("sgo: TODO implement FindUserByEmail")`))
+		updated := strings.NewReplacer(
+			`panic("sgo: TODO implement CreateUser")`, `return s.repo.Create(ctx, &domain.User{Name: req.Name, Email: req.Email})`,
+			`panic("sgo: TODO implement GetUser")`, `return s.repo.Get(ctx, req.Id)`,
+			`panic("sgo: TODO implement FindUserByEmail")`, `return s.repo.FindByEmail(ctx, req.Email)`,
+		).Replace(string(serviceContent))
+		Expect(os.WriteFile(servicePath, []byte(updated), 0644)).To(Succeed())
+
+		buildCmd := exec.Command("go", "build", "./...")
+		buildCmd.Dir = dir
+		out, err := buildCmd.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), string(out))
+
+		mainSrc := `package main
+
+import (
+	"context"
+	"fmt"
+
+	app "demo/internal/application/user"
+	"demo/internal/application/ports"
+	memory "demo/internal/infrastructure/persistence/memory"
+)
+
+func main() {
+	ctx := context.Background()
+	repo := memory.NewUserRepository()
+	svc := app.NewUserService(repo, ports.NoopEventPublisher{})
+
+	created, err := svc.CreateUser(ctx, &app.CreateUserRequest{Name: "Ada", Email: "ada@example.com"})
+	if err != nil {
+		panic(err)
+	}
+
+	found, err := svc.FindUserByEmail(ctx, &app.FindUserByEmailRequest{Email: "ada@example.com"})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("found id=%s name=%s created_id=%s\n", found.Id, found.Name, created.Id)
+}
+`
+		mainDir := filepath.Join(dir, "cmd", "harness")
+		Expect(os.MkdirAll(mainDir, 0755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(mainDir, "main.go"), []byte(mainSrc), 0644)).To(Succeed())
+
+		runCmd := exec.Command("go", "run", "./cmd/harness")
+		runCmd.Dir = dir
+		out, err = runCmd.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), string(out))
+		Expect(string(out)).To(ContainSubstring("found id=user-1 name=Ada created_id=user-1"))
+	})
+})
+
+const userServiceImplementation = `package user
 
 import (
 	"context"
 
-	user "demo/internal/core/domain/user"
-	out "demo/internal/core/port/out"
+	domain "demo/internal/domain/user"
+	ports "demo/internal/application/ports"
 )
 
 type UserService struct {
-	repo out.UserRepository
+	repo      domain.UserRepository
+	publisher ports.EventPublisher
 }
 
-func NewUserService(repo out.UserRepository) *UserService {
-	return &UserService{repo: repo}
+func NewUserService(repo domain.UserRepository, publisher ports.EventPublisher) *UserService {
+	return &UserService{repo: repo, publisher: publisher}
 }
 
-func (s *UserService) CreateUser(ctx context.Context, req *user.CreateUserRequest) (*user.UserResponse, error) {
-	created, err := s.repo.Create(ctx, &user.User{Name: req.Name, Description: req.Description})
-	if err != nil {
-		return nil, err
-	}
-	return &user.UserResponse{User: created}, nil
+func (s *UserService) CreateUser(ctx context.Context, req *CreateUserRequest) (*domain.User, error) {
+	return s.repo.Create(ctx, &domain.User{Name: req.Name, Description: req.Description})
 }
 
-func (s *UserService) GetUser(ctx context.Context, req *user.GetUserRequest) (*user.UserResponse, error) {
-	u, err := s.repo.Get(ctx, req.Id)
-	if err != nil {
-		return nil, err
-	}
-	return &user.UserResponse{User: u}, nil
+func (s *UserService) GetUser(ctx context.Context, req *GetUserRequest) (*domain.User, error) {
+	return s.repo.Get(ctx, req.Id)
 }
 
-func (s *UserService) ListUsers(ctx context.Context, req *user.ListUsersRequest) (*user.ListUsersResponse, error) {
-	users, total, err := s.repo.List(ctx, req.Page, req.PageSize)
-	if err != nil {
-		return nil, err
-	}
-	return &user.ListUsersResponse{Users: users, Total: total}, nil
+func (s *UserService) ListUsers(ctx context.Context, req *ListUsersRequest) ([]*domain.User, error) {
+	items, _, err := s.repo.List(ctx, req.Page, req.PageSize)
+	return items, err
 }
 
-func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserRequest) (*user.UserResponse, error) {
-	updated, err := s.repo.Update(ctx, &user.User{Id: req.Id, Name: req.Name, Description: req.Description})
-	if err != nil {
-		return nil, err
-	}
-	return &user.UserResponse{User: updated}, nil
+func (s *UserService) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*domain.User, error) {
+	return s.repo.Update(ctx, &domain.User{Id: req.Id, Name: req.Name, Description: req.Description})
 }
 
-func (s *UserService) DeleteUser(ctx context.Context, req *user.DeleteUserRequest) (*user.DeleteUserResponse, error) {
-	if err := s.repo.Delete(ctx, req.Id); err != nil {
-		return nil, err
-	}
-	return &user.DeleteUserResponse{Success: true}, nil
+func (s *UserService) DeleteUser(ctx context.Context, req *DeleteUserRequest) error {
+	return s.repo.Delete(ctx, req.Id)
 }
 `
 
@@ -310,7 +447,7 @@ var _ = Describe("a generated and implemented project, running for real", func()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
 
-		servicePath := filepath.Join(dir, "internal", "core", "service", "user_service.go")
+		servicePath := filepath.Join(dir, "internal", "application", "user", "service.go")
 		Expect(os.WriteFile(servicePath, []byte(userServiceImplementation), 0644)).To(Succeed())
 
 		binPath := filepath.Join(dir, "bin", "demo")
@@ -406,13 +543,13 @@ var _ = Describe("a generated project with Postgres selected, running for real",
 		Expect(err).NotTo(HaveOccurred())
 		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
 
-		Expect(filepath.Join(dir, "internal", "adapter", "out", "persistence", "postgres", "user_repository_gen.go")).To(BeAnExistingFile())
+		Expect(filepath.Join(dir, "internal", "infrastructure", "persistence", "postgres", "user_repository_gen.go")).To(BeAnExistingFile())
 
-		wireContent, err := os.ReadFile(filepath.Join(dir, "internal", "bootstrap", "wire_gen.go"))
+		wireContent, err := os.ReadFile(filepath.Join(dir, "internal", "infrastructure", "bootstrap", "wire_gen.go"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(wireContent)).To(ContainSubstring("postgres.NewUserRepository(db)"), "must use the real adapter, not memory, once Postgres is selected")
 
-		servicePath := filepath.Join(dir, "internal", "core", "service", "user_service.go")
+		servicePath := filepath.Join(dir, "internal", "application", "user", "service.go")
 		Expect(os.WriteFile(servicePath, []byte(userServiceImplementation), 0644)).To(Succeed())
 
 		binPath := filepath.Join(dir, "bin", "demo")

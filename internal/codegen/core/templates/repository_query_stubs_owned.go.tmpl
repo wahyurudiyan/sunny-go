@@ -1,0 +1,16 @@
+// Owned by you — sgo only appends a new method stub here for a newly
+// added `option (sgo.repository_query) = true;` RPC; it never rewrites
+// or removes a line already here (ARCHITECTURE.md §21).
+
+package {{.Package}}
+
+import (
+	"context"
+
+	{{.DomainPkg}} "{{.DomainImportPath}}"
+)
+{{range .Methods}}
+func (r *{{$.AggregateName}}Repository) {{.Name}}(ctx context.Context{{range .Params}}, {{.GoParam}} {{.GoType}}{{end}}) (*{{$.DomainPkg}}.{{$.AggregateName}}, error) {
+	panic("sgo: TODO implement {{.Name}}")
+}
+{{end}}

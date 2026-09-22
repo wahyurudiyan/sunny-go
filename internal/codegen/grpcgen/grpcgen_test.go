@@ -26,10 +26,10 @@ var _ = Describe("Generate", func() {
 		protoDir = filepath.Join(root, "contract", "pb")
 		Expect(sgoproto.GenerateStub(protoDir, "user", "demo")).To(Succeed())
 
-		destDir = filepath.Join(root, "internal", "adapter", "in", "grpc")
+		destDir = filepath.Join(root, "internal", "infrastructure", "transport", "grpc")
 	})
 
-	It("writes a server embedding UnimplementedUserServiceServer by value and delegating to the usecase port", func() {
+	It("writes a server embedding UnimplementedUserServiceServer by value and delegating to the application service", func() {
 		fd, err := sgoproto.Compile(protoDir, "user.proto")
 		Expect(err).NotTo(HaveOccurred())
 		file, err := sgoproto.Build(fd)
@@ -42,10 +42,11 @@ var _ = Describe("Generate", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(string(content)).To(ContainSubstring("wire.UnimplementedUserServiceServer"))
-		Expect(string(content)).To(ContainSubstring("func RegisterUserServiceServer(s grpc.ServiceRegistrar, svc in.UserUseCase)"))
+		Expect(string(content)).To(ContainSubstring("func RegisterUserServiceServer(s grpc.ServiceRegistrar, svc *app.UserService)"))
 		Expect(string(content)).To(ContainSubstring("func (h *userServiceServer) CreateUser(ctx context.Context, req *wire.CreateUserRequest) (*wire.UserResponse, error)"))
-		Expect(string(content)).To(ContainSubstring("mapper.CreateUserRequestToDomain(req)"))
-		Expect(string(content)).To(ContainSubstring("mapper.UserResponseFromDomain(resp)"))
+		Expect(string(content)).To(ContainSubstring("mapper.CreateUserRequestToApp(req)"))
+		Expect(string(content)).To(ContainSubstring("mapper.UserFromDomain(resp)"))
+		Expect(string(content)).To(ContainSubstring("User: mapper.UserFromDomain(resp)"))
 	})
 
 	It("errors clearly when the proto declares no service", func() {

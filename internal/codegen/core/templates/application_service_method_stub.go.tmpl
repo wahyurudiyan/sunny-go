@@ -1,0 +1,4 @@
+
+func (s *{{.Receiver}}) {{.Name}}(ctx context.Context, req *{{.ParamType}}) {{if .ReturnType}}({{.ReturnType}}, error){{else}}error{{end}} {
+	panic("sgo: TODO implement {{.Name}}")
+}

@@ -1,0 +1,21 @@
+package {{.Package}}
+
+// Add {{.AggregateName}}'s business methods here — invariant checks,
+// state transitions, and event recording (append to a.events; see
+// PullEvents in {{.Package}}_gen.go).
+//
+// This file is created once by `sgo generate code` and never
+// overwritten by later runs — see ARCHITECTURE.md §6. Field-level
+// validation (protovalidate constraints declared in the proto, e.g.
+// `(buf.validate.field).string.email = true`) already runs before a
+// wire message ever reaches this aggregate — see the generated
+// mapper — so invariants here are about {{.AggregateName}}'s own
+// business rules, not re-checking what's already enforced at the
+// boundary.
+//
+// Example:
+//
+//	func (a *{{.AggregateName}}) MarkPlaced() error {
+//		a.events = append(a.events, {{.AggregateName}}PlacedEvent{ {{.AggregateName}}Id: a.Id})
+//		return nil
+//	}

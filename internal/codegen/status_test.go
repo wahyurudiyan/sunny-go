@@ -34,10 +34,10 @@ var _ = Describe("Status", func() {
 
 		Expect(os.MkdirAll(filepath.Join(dir, "contract", "gen", "user"), 0755)).To(Succeed())
 
-		Expect(os.MkdirAll(filepath.Join(dir, "internal", "core", "domain", "user"), 0755)).To(Succeed())
+		Expect(os.MkdirAll(filepath.Join(dir, "internal", "domain", "user"), 0755)).To(Succeed())
 
-		Expect(os.MkdirAll(filepath.Join(dir, "internal", "core", "service"), 0755)).To(Succeed())
-		Expect(os.WriteFile(filepath.Join(dir, "internal", "core", "service", "user_service.go"), []byte("x"), 0644)).To(Succeed())
+		Expect(os.MkdirAll(filepath.Join(dir, "internal", "application", "user"), 0755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(dir, "internal", "application", "user", "service.go"), []byte("x"), 0644)).To(Succeed())
 
 		s := codegen.Status(dir, "user")
 		Expect(s).To(Equal(codegen.ServiceStatus{

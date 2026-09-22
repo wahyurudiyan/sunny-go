@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/project"
 	"github.com/wahyurudiyan/sunny-go/internal/config"
@@ -59,7 +60,7 @@ func Run(defaultName string) (*project.Options, error) {
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("Datastores").
-				Description("Space to toggle, enter to continue").
+				Description("Space to toggle, enter to continue — leave empty for in-memory only").
 				Options(
 					huh.NewOption("PostgreSQL", string(config.PersistenceEnginePostgres)),
 					huh.NewOption("MySQL", string(config.PersistenceEngineMySQL)),
@@ -68,9 +69,11 @@ func Run(defaultName string) (*project.Options, error) {
 				Value(&a.Datastores),
 			huh.NewConfirm().
 				Title("Enable Redis cache?").
+				WithButtonAlignment(lipgloss.Left).
 				Value(&a.EnableRedis),
 			huh.NewConfirm().
 				Title("Enable Elasticsearch search?").
+				WithButtonAlignment(lipgloss.Left).
 				Value(&a.EnableSearch),
 		),
 		huh.NewGroup(

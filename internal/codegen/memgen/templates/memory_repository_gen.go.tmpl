@@ -111,3 +111,22 @@ func (r *{{.Entity}}Repository) Delete(ctx context.Context, id string) error {
 
 	return nil
 }
+{{range .AutoQueries}}
+// {{.Name}} is derived from the {{.RPC}} RPC's
+// `option (sgo.repository_query) = true;` marking — a linear scan
+// keyed on its one parameter, {{(index .Params 0).GoParam}}, which
+// case-insensitively matched the domain entity's {{.FieldGoName}}
+// field (ARCHITECTURE.md §21).
+func (r *{{$.Entity}}Repository) {{.Name}}(ctx context.Context{{range .Params}}, {{.GoParam}} {{.GoType}}{{end}}) (*{{$.DomainPkg}}.{{$.Entity}}, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, entity := range r.byID {
+		if entity.{{.FieldGoName}} == {{(index .Params 0).GoParam}} {
+			return entity, nil
+		}
+	}
+
+	return nil, fmt.Errorf("{{$.EntityLower}} with {{.FieldGoName}} %v not found", {{(index .Params 0).GoParam}})
+}
+{{end}}

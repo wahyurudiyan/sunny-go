@@ -124,7 +124,7 @@ func Scaffold(destDir string, opts Options) error {
 		return err
 	}
 
-	httpDir := filepath.Join(destDir, "internal", "adapter", "in", "http", string(opts.HTTPFramework))
+	httpDir := filepath.Join(destDir, "internal", "infrastructure", "transport", "http", string(opts.HTTPFramework))
 	if err := httpgen.GenerateServer(opts.HTTPFramework, httpDir); err != nil {
 		return fmt.Errorf("failed to generate HTTP server boilerplate: %w", err)
 	}
@@ -138,7 +138,7 @@ func Scaffold(destDir string, opts Options) error {
 		HTTPFramework: opts.HTTPFramework,
 		Persistence:   config.Persistence{Mode: opts.Persistence.Mode},
 	}
-	bootstrapDir := filepath.Join(destDir, "internal", "bootstrap")
+	bootstrapDir := filepath.Join(destDir, "internal", "infrastructure", "bootstrap")
 	if err := bootstrap.Generate(bootstrapCfg, bootstrapDir); err != nil {
 		return fmt.Errorf("failed to generate bootstrap: %w", err)
 	}
@@ -162,25 +162,25 @@ func createDirectories(destDir string, opts Options) error {
 	dirs := []string{
 		filepath.Join("contract", "pb"),
 		filepath.Join("contract", "gen"),
-		filepath.Join("internal", "core", "domain"),
-		filepath.Join("internal", "core", "port", "in"),
-		filepath.Join("internal", "core", "port", "out"),
-		filepath.Join("internal", "core", "service"),
-		filepath.Join("internal", "adapter", "in", "http", string(opts.HTTPFramework)),
-		filepath.Join("internal", "adapter", "in", "grpc"),
-		filepath.Join("internal", "adapter", "out"),
-		filepath.Join("internal", "bootstrap"),
+		filepath.Join("internal", "domain"),
+		filepath.Join("internal", "application", "ports"),
+		filepath.Join("internal", "infrastructure", "transport", "http", string(opts.HTTPFramework)),
+		filepath.Join("internal", "infrastructure", "transport", "grpc"),
+		filepath.Join("internal", "infrastructure", "persistence"),
+		filepath.Join("internal", "infrastructure", "bootstrap"),
 		filepath.Join("cmd", opts.Name),
 		"docker",
 	}
 
 	for _, engine := range opts.Persistence.Engines {
-		dirs = append(dirs, filepath.Join("internal", "adapter", "out", "persistence", string(engine)))
+		dirs = append(dirs, filepath.Join("internal", "infrastructure", "persistence", string(engine)))
 	}
 	for _, engine := range opts.Cache {
+		dirs = append(dirs, filepath.Join("internal", "core", "port", "out"))
 		dirs = append(dirs, filepath.Join("internal", "adapter", "out", "cache", string(engine)))
 	}
 	for _, engine := range opts.Search {
+		dirs = append(dirs, filepath.Join("internal", "core", "port", "out"))
 		dirs = append(dirs, filepath.Join("internal", "adapter", "out", "search", string(engine)))
 	}
 

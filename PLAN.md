@@ -992,21 +992,27 @@ gRPC method and repository counterpart; every existing generated-project
 e2e spec still passes with no proto changes. All met — full repo suite
 green, `gofmt`/`go vet` clean.
 
-## Phase 17 — Docs: README as a getting-started guide, CONTRIBUTING.md **(planned)**
+## Phase 17 — Docs: README as a getting-started guide, CONTRIBUTING.md **(done)**
 
 Deliberately last in this batch — it should describe the layout,
 commands, and proto conventions Phases 11–16 actually land with, not
 what's true today. Mechanical relative to the rest of this batch.
 
-- [ ] **README.md** restructured into a fuller guide: overview, install,
+- [x] **README.md** restructured into a fuller guide: overview, install,
       getting started/quick start, full command reference pointer
       (`docs/CLI.md`), architecture pointer (`ARCHITECTURE.md`), FAQ/
       troubleshooting section if anything recurring surfaced by then.
       Still the repo's actual `README.md` (GitHub renders it on the repo
       homepage) — "as a wiki" means comprehensive and navigable, not a
       literal GitHub Wiki, which is a separate, harder-to-review,
-      harder-to-PR surface than a file already in the repo.
-- [ ] **`CONTRIBUTING.md`** — the existing "Contributing / development"
+      harder-to-PR surface than a file already in the repo. Landed with
+      a table of contents plus dedicated sections on the generated-vs-
+      owned file split, the `sgo.*`/`google.api.http` proto option
+      reference (table + worked example), HTTP routing, repository
+      queries beyond CRUD, persistence/cache/search, OpenAPI, the web
+      UI, and a project-layout tree captured from a real `sgo init` +
+      `generate proto` + `generate code` run rather than hand-typed.
+- [x] **`CONTRIBUTING.md`** — the existing "Contributing / development"
       section moved out of README.md into its own file (standard
       GitHub convention: `CONTRIBUTING.md`, not `CONTRIBUTE.md` — GitHub
       links to it automatically from the "Contributing" prompt on a new
@@ -1015,16 +1021,22 @@ what's true today. Mechanical relative to the rest of this batch.
       PLAN.md/ARCHITECTURE.md → implement → PR, not merged by the author)
       so an outside contributor understands the process before opening
       one.
-- [ ] Cross-check every command/path mentioned in both files against
+- [x] Cross-check every command/path mentioned in both files against
       `docs/CLI.md` and the current generated layout — this phase is the
       one place drift between "what the docs say" and "what `sgo`
-      actually does" gets caught for this whole batch.
+      actually does" gets caught for this whole batch. Caught and fixed
+      along the way: `docs/CLI.md`'s `sgo init` flags table was missing
+      `--openapi-version`/`--openapi-format`; the required Go version
+      (1.25 → 1.26, bumped during Phase 15) was stale in the old README.
 
 **Exit criteria:** README.md covers overview → install → getting started
 end to end without needing `ARCHITECTURE.md`/`docs/CLI.md` open
 side-by-side for a first-time user; `CONTRIBUTING.md` exists and is
 what GitHub links to from a new issue/PR; nothing in either file
-contradicts `docs/CLI.md` or the actual current layout.
+contradicts `docs/CLI.md` or the actual current layout. All met — every
+path/tree in the new README was captured from a real generated project,
+and the two docs-drift bugs found while cross-checking were fixed, not
+just noted.
 
 ## Non-goals (for now)
 

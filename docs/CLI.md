@@ -31,6 +31,8 @@ Flags (any one of these, if set, skips the wizard):
 | `--db` | comma list of `postgres`, `mysql`, `mongo` | none | |
 | `--cache` | comma list, currently only `redis` | none | |
 | `--search` | comma list, currently only `elasticsearch` | none | |
+| `--openapi-version` | `3.0`, `3.1` | `3.0` | consumed by `sgo generate openapi` below |
+| `--openapi-format` | `yaml`, `json` | `yaml` | consumed by `sgo generate openapi` below |
 
 There's no `--yes` flag — a non-TTY stdin already skips the wizard
 automatically, and any single selection flag signals "I want direct

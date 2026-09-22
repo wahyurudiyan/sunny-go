@@ -7,6 +7,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"google.golang.org/protobuf/reflect/protoreflect"
+
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/core"
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/httpgen"
 	sgoproto "github.com/wahyurudiyan/sunny-go/internal/codegen/proto"
@@ -16,6 +18,7 @@ import (
 var _ = Describe("Generate", func() {
 	var (
 		root, protoDir, destDir string
+		fd                      protoreflect.FileDescriptor
 		file                    *sgoproto.File
 		p                       core.Paths
 	)
@@ -27,15 +30,15 @@ var _ = Describe("Generate", func() {
 		DeferCleanup(func() { Expect(os.RemoveAll(root)).To(Succeed()) })
 
 		protoDir = filepath.Join(root, "contract", "pb")
-		file = userFile(protoDir)
+		fd, file = userFile(protoDir)
 		p = core.Paths{Module: "demo", Entity: "user"}
 	})
 
 	Context("gin", func() {
 		BeforeEach(func() {
-			destDir = filepath.Join(root, "internal", "adapter", "in", "http", "gin")
+			destDir = filepath.Join(root, "internal", "infrastructure", "transport", "http", "gin")
 			Expect(httpgen.GenerateServer(config.HTTPFrameworkGin, destDir)).To(Succeed())
-			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkGin, file, p, destDir)).To(Succeed())
+			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkGin, fd, file, p, destDir)).To(Succeed())
 		})
 
 		It("writes a server wrapping gin.Engine", func() {
@@ -45,20 +48,22 @@ var _ = Describe("Generate", func() {
 			Expect(string(content)).To(ContainSubstring("func (s *Server) Start(addr string) error"))
 		})
 
-		It("writes route registrations using gin's HTTP-method-named functions", func() {
+		It("writes route registrations calling the application service directly", func() {
 			content, err := os.ReadFile(filepath.Join(destDir, "user_routes_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(engine *gin.Engine, svc in.UserUseCase)"))
+			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(engine *gin.Engine, svc *app.UserService)"))
 			Expect(string(content)).To(ContainSubstring(`engine.GET("/api/v1/users/:id"`))
 			Expect(string(content)).To(ContainSubstring(`engine.POST("/api/v1/users"`))
+			Expect(string(content)).To(ContainSubstring(`gin.H{"user": resp}`))
+			Expect(string(content)).To(ContainSubstring(`gin.H{"success": true}`))
 		})
 	})
 
 	Context("echo", func() {
 		BeforeEach(func() {
-			destDir = filepath.Join(root, "internal", "adapter", "in", "http", "echo")
+			destDir = filepath.Join(root, "internal", "infrastructure", "transport", "http", "echo")
 			Expect(httpgen.GenerateServer(config.HTTPFrameworkEcho, destDir)).To(Succeed())
-			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkEcho, file, p, destDir)).To(Succeed())
+			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkEcho, fd, file, p, destDir)).To(Succeed())
 		})
 
 		It("writes a server wrapping echo.Echo", func() {
@@ -67,19 +72,19 @@ var _ = Describe("Generate", func() {
 			Expect(string(content)).To(ContainSubstring("*echo.Echo"))
 		})
 
-		It("writes route registrations using echo.Context handlers", func() {
+		It("writes route registrations calling the application service directly", func() {
 			content, err := os.ReadFile(filepath.Join(destDir, "user_routes_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(e *echo.Echo, svc in.UserUseCase)"))
+			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(e *echo.Echo, svc *app.UserService)"))
 			Expect(string(content)).To(ContainSubstring(`e.GET("/api/v1/users/:id"`))
 		})
 	})
 
 	Context("chi", func() {
 		BeforeEach(func() {
-			destDir = filepath.Join(root, "internal", "adapter", "in", "http", "chi")
+			destDir = filepath.Join(root, "internal", "infrastructure", "transport", "http", "chi")
 			Expect(httpgen.GenerateServer(config.HTTPFrameworkChi, destDir)).To(Succeed())
-			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkChi, file, p, destDir)).To(Succeed())
+			Expect(httpgen.GenerateRoutes(config.HTTPFrameworkChi, fd, file, p, destDir)).To(Succeed())
 		})
 
 		It("writes a server wrapping chi.Router", func() {
@@ -91,7 +96,7 @@ var _ = Describe("Generate", func() {
 		It("writes route registrations with chi's {id} path syntax", func() {
 			content, err := os.ReadFile(filepath.Join(destDir, "user_routes_gen.go"))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(r chi.Router, svc in.UserUseCase)"))
+			Expect(string(content)).To(ContainSubstring("func RegisterUserRoutes(r chi.Router, svc *app.UserService)"))
 			Expect(string(content)).To(ContainSubstring(`r.Get("/api/v1/users/{id}"`))
 			Expect(string(content)).To(ContainSubstring("chi.URLParam(req, \"id\")"))
 		})
@@ -99,6 +104,27 @@ var _ = Describe("Generate", func() {
 
 	It("rejects an unsupported framework", func() {
 		err := httpgen.GenerateServer("fiber", filepath.Join(root, "x"))
+		Expect(err).To(MatchError(ContainSubstring("unsupported HTTP framework")))
+	})
+})
+
+var _ = Describe("ColonStyle", func() {
+	It("matches each framework's own routes template syntax", func() {
+		gin, err := httpgen.ColonStyle(config.HTTPFrameworkGin)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gin).To(BeTrue())
+
+		echo, err := httpgen.ColonStyle(config.HTTPFrameworkEcho)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(echo).To(BeTrue())
+
+		chi, err := httpgen.ColonStyle(config.HTTPFrameworkChi)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(chi).To(BeFalse())
+	})
+
+	It("rejects an unsupported framework", func() {
+		_, err := httpgen.ColonStyle("fiber")
 		Expect(err).To(MatchError(ContainSubstring("unsupported HTTP framework")))
 	})
 })

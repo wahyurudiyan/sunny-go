@@ -2,14 +2,15 @@
 //
 // Run wires every generated service to its repository — the real
 // adapter sgo.yaml currently selects, or the in-memory default if none
-// was chosen (ARCHITECTURE.md §8.2, Decision #15) — and starts both the
-// HTTP and gRPC servers. It blocks until one of them exits.
+// was chosen (ARCHITECTURE.md §8.2, Decision #15) — and a shared no-op
+// EventPublisher (ARCHITECTURE.md §17), and starts both the HTTP and
+// gRPC servers. It blocks until one of them exits.
 //
 // A cache/search client is connected here if sgo.yaml selects one, but
 // isn't wired into any service automatically: that would mean changing
 // an owned file's constructor signature. Add it as a parameter to
-// New<Entity>Service yourself (internal/core/service) if you want a
-// service to use it.
+// New<Entity>Service yourself (internal/application/<entity>) if you
+// want a service to use it.
 
 package bootstrap
 
@@ -25,7 +26,10 @@ import (
 {{- if .Entities}}
 	grpcadapter "{{.GRPCImportPath}}"
 	{{.RepoPackage}} "{{.RepoImportPath}}"
-	service "{{.ServiceImportPath}}"
+	ports "{{.ApplicationPortsPath}}"
+{{- range .Entities}}
+	{{.Lower}}app "{{.ApplicationImportPath}}"
+{{- end}}
 {{- end}}
 {{- if .UsesCache}}
 	cacheadapter "{{.CacheImportPath}}"
@@ -71,9 +75,12 @@ func Run(ctx context.Context) error {
 	search := searchadapter.New(searchClient, "default")
 	_ = search // available to wire into a service constructor yourself
 {{end}}
+{{if .Entities}}
+	publisher := ports.NoopEventPublisher{}
+{{end}}
 {{range .Entities}}
 	{{.Lower}}Repo := {{$.RepoPackage}}.New{{.Title}}Repository({{$.ConnArg}})
-	{{.Lower}}Svc := service.New{{.Title}}Service({{.Lower}}Repo)
+	{{.Lower}}Svc := {{.Lower}}app.New{{.Title}}Service({{.Lower}}Repo, publisher)
 	httpadapter.Register{{.Title}}Routes(httpServer.{{$.EngineField}}, {{.Lower}}Svc)
 	grpcadapter.Register{{.Title}}ServiceServer(grpcServer, {{.Lower}}Svc)
 {{end}}

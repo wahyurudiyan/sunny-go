@@ -60,7 +60,7 @@ func generateSelfManaged(def engineDef, engine config.PersistenceEngine, cols []
 		Package:          string(engine),
 		Entity:           entityTitle(p.Entity),
 		DomainPkg:        p.Entity,
-		DomainImportPath: p.DomainImportPath(),
+		DomainImportPath: p.AggregateDomainImportPath(),
 		DriverImport:     def.driverImport,
 		SQLDriver:        def.sqlDriver,
 		DSNEnvPrefix:     def.dsnEnvPrefix,

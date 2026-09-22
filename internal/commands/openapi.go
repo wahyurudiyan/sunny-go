@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wahyurudiyan/sunny-go/internal/codegen/openapigen"
+	"github.com/wahyurudiyan/sunny-go/internal/openapiui"
 )
 
 var openapiCmd = &cobra.Command{
@@ -72,7 +73,52 @@ func resolveValidatePath(args []string) (string, error) {
 	return openapigen.Path(".", cfg.OpenAPI.Format), nil
 }
 
+var openapiUIPort int
+
+var openapiUICmd = &cobra.Command{
+	Use:   "ui",
+	Short: "Browse the project's generated OpenAPI document in a live viewer",
+	Long: `Serve the current project's already-generated docs/openapi.<ext>
+through an embedded, offline Redoc viewer at http://127.0.0.1:<port>.
+
+Binds to 127.0.0.1 only; there is no auth, since it never listens on
+anything but loopback — same stance 'sgo ui' already takes.
+
+Reads whatever's on disk rather than regenerating on every request —
+run 'sgo generate openapi' first if it doesn't exist yet (same contract
+'sgo openapi validate' already has), and again whenever you want the
+viewer to pick up route changes; no server restart needed, just a
+browser refresh.
+
+Example:
+  sgo openapi ui
+  sgo openapi ui --port 4749
+`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg, err := loadProjectConfig()
+		if err != nil {
+			fmt.Printf("❌ Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if _, err := openapiui.Handler(".", cfg); err != nil {
+			fmt.Printf("❌ Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("📖 sgo openapi ui running at http://127.0.0.1:%d\n", openapiUIPort)
+		if err := openapiui.Serve(".", cfg, openapiUIPort); err != nil {
+			fmt.Printf("❌ Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 func init() {
+	openapiUICmd.Flags().IntVar(&openapiUIPort, "port", 4749, "Port to bind the OpenAPI viewer to")
+
 	openapiCmd.AddCommand(openapiValidateCmd)
+	openapiCmd.AddCommand(openapiUICmd)
 	rootCmd.AddCommand(openapiCmd)
 }

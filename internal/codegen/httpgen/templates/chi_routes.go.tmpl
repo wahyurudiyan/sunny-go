@@ -8,30 +8,46 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	{{.DomainPkg}} "{{.DomainImportPath}}"
-	in "{{.PortInImportPath}}"
+	app "{{.ApplicationImportPath}}"
 )
 
-func Register{{.Entity}}Routes(r chi.Router, svc in.{{.Entity}}UseCase) {
+func Register{{.Entity}}Routes(r chi.Router, svc *app.{{.Entity}}Service) {
 {{range .Routes}}
 	r.{{.TitleVerb}}("{{.Path}}", func(w http.ResponseWriter, req *http.Request) {
-		var body {{$.DomainPkg}}.{{.Input}}
+		var body app.{{.Input}}
 {{- if .HasBody}}
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 {{- end}}
-{{- if .HasID}}
-		body.Id = chi.URLParam(req, "id")
+{{- range .PathParams}}
+		body.{{.GoName}} = chi.URLParam(req, "{{.URLName}}")
 {{- end}}
+{{- if eq .RespKind "delete"}}
+		if err := svc.{{.Name}}(req.Context(), &body); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"success": true})
+{{- else}}
 		resp, err := svc.{{.Name}}(req.Context(), &body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+{{- if eq .RespKind "list"}}
+{{- if .RespTotalField}}
+		json.NewEncoder(w).Encode(map[string]any{"{{.RespField}}": resp, "{{.RespTotalField}}": len(resp)})
+{{- else}}
+		json.NewEncoder(w).Encode(map[string]any{"{{.RespField}}": resp})
+{{- end}}
+{{- else}}
+		json.NewEncoder(w).Encode(map[string]any{"{{.RespField}}": resp})
+{{- end}}
+{{- end}}
 	})
 {{end}}
 }

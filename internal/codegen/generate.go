@@ -1,8 +1,9 @@
 // Package codegen orchestrates `sgo generate code`: compiling a proto
 // file and driving every generator in its subpackages (proto, wiregen,
 // core, httpgen, grpcgen, memgen, bootstrap) to produce contract/gen,
-// the hexagonal core, the HTTP/gRPC adapters, a runnable in-memory
-// repository, and the composition root for one entity.
+// the DDD domain/application/infrastructure layers (ARCHITECTURE.md
+// §17), the HTTP/gRPC adapters, a runnable in-memory repository, and the
+// composition root for one entity.
 package codegen
 
 import (
@@ -26,9 +27,10 @@ import (
 )
 
 // GenerateCode reads projectDir/contract/pb/<name>.proto and (re)generates
-// everything that derives from it: contract/gen, the domain entity, the
-// usecase/repository ports, the service skeleton (safely — see
-// core.GenerateService), the wire↔domain mapper, the HTTP routes for the
+// everything that derives from it: contract/gen, the domain aggregate
+// and its repository port, the application layer's CQRS command/query
+// DTOs and service (safely — see core.GenerateApplicationService), the
+// wire↔domain and wire↔application mappers, the HTTP routes for the
 // project's chosen framework, the gRPC server adapter, a default
 // in-memory repository, and the bootstrap composition root (rewired for
 // every service on record, not just this one). It then runs
@@ -58,23 +60,36 @@ func GenerateCode(projectDir, name string, cfg *config.Config) error {
 
 	p := core.Paths{Module: cfg.Module, Entity: name}
 
-	if err := core.GenerateDomain(file, p, filepath.Join(projectDir, "internal", "core", "domain", name)); err != nil {
+	domainDir := filepath.Join(projectDir, "internal", "domain", name)
+	if err := core.GenerateEventKernel(filepath.Join(projectDir, "internal", "domain", "event")); err != nil {
 		return err
 	}
-	if err := core.GenerateUsecasePort(file, p, filepath.Join(projectDir, "internal", "core", "port", "in")); err != nil {
+	if err := core.GenerateAggregate(file, fd, p, domainDir); err != nil {
 		return err
 	}
-	if err := core.GenerateRepositoryPort(p, filepath.Join(projectDir, "internal", "core", "port", "out")); err != nil {
+	if err := core.GenerateAggregateRepositoryPort(fd, p, domainDir); err != nil {
 		return err
 	}
-	if err := core.GenerateService(file, p, filepath.Join(projectDir, "internal", "core", "service")); err != nil {
-		return err
-	}
-	if err := core.GenerateMapper(file, p, filepath.Join(projectDir, "internal", "adapter", "mapper")); err != nil {
+	if err := core.GenerateDomainErrors(fd, p, domainDir); err != nil {
 		return err
 	}
 
-	httpDir := filepath.Join(projectDir, "internal", "adapter", "in", "http", string(cfg.HTTPFramework))
+	appDir := filepath.Join(projectDir, "internal", "application", name)
+	if err := core.GenerateCommandsAndQueries(file, fd, p, appDir); err != nil {
+		return err
+	}
+	if err := core.GenerateEventPublisher(p, filepath.Join(projectDir, "internal", "application", "ports")); err != nil {
+		return err
+	}
+	if err := core.GenerateApplicationService(file, fd, p, appDir); err != nil {
+		return err
+	}
+
+	if err := core.GenerateInfraMapper(file, p, filepath.Join(projectDir, "internal", "infrastructure", "transport")); err != nil {
+		return err
+	}
+
+	httpDir := filepath.Join(projectDir, "internal", "infrastructure", "transport", "http", string(cfg.HTTPFramework))
 	if err := httpgen.GenerateServer(cfg.HTTPFramework, httpDir); err != nil {
 		return err
 	}
@@ -82,11 +97,11 @@ func GenerateCode(projectDir, name string, cfg *config.Config) error {
 		return err
 	}
 
-	if err := grpcgen.Generate(file, p, filepath.Join(projectDir, "internal", "adapter", "in", "grpc")); err != nil {
+	if err := grpcgen.Generate(file, p, filepath.Join(projectDir, "internal", "infrastructure", "transport", "grpc")); err != nil {
 		return err
 	}
 
-	if err := memgen.Generate(p, filepath.Join(projectDir, "internal", "adapter", "out", "persistence", "memory")); err != nil {
+	if err := memgen.Generate(p, filepath.Join(projectDir, "internal", "infrastructure", "persistence", "memory")); err != nil {
 		return err
 	}
 
@@ -100,7 +115,7 @@ func GenerateCode(projectDir, name string, cfg *config.Config) error {
 
 	addService(cfg, name)
 
-	if err := bootstrap.Generate(cfg, filepath.Join(projectDir, "internal", "bootstrap")); err != nil {
+	if err := bootstrap.Generate(cfg, filepath.Join(projectDir, "internal", "infrastructure", "bootstrap")); err != nil {
 		return err
 	}
 
@@ -123,10 +138,10 @@ func generateRealPersistence(cfg *config.Config, file *sgoproto.File, p core.Pat
 	engine := cfg.Persistence.Engines[0]
 	switch {
 	case sqlgen.Supports(engine):
-		destDir := filepath.Join(projectDir, "internal", "adapter", "out", "persistence", string(engine))
+		destDir := filepath.Join(projectDir, "internal", "infrastructure", "persistence", string(engine))
 		return sqlgen.Generate(engine, cfg.Persistence.Mode, file, p, destDir)
 	case engine == config.PersistenceEngineMongo:
-		destDir := filepath.Join(projectDir, "internal", "adapter", "out", "persistence", "mongo")
+		destDir := filepath.Join(projectDir, "internal", "infrastructure", "persistence", "mongo")
 		return mongogen.Generate(file, p, destDir)
 	default:
 		return fmt.Errorf("no persistence generator for engine %q", engine)

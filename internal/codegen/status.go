@@ -29,7 +29,7 @@ func Status(projectDir, name string) ServiceStatus {
 		Name:         name,
 		Proto:        exists(filepath.Join("contract", "pb", name+".proto")),
 		ContractGen:  exists(filepath.Join("contract", "gen", name)),
-		DomainEntity: exists(filepath.Join("internal", "core", "domain", name)),
-		ServiceImpl:  exists(filepath.Join("internal", "core", "service", name+"_service.go")),
+		DomainEntity: exists(filepath.Join("internal", "domain", name)),
+		ServiceImpl:  exists(filepath.Join("internal", "application", name, "service.go")),
 	}
 }

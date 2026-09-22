@@ -158,15 +158,15 @@ var _ = Describe("Scaffold", func() {
 		})
 
 		It("creates a persistence adapter directory only for the selected engine", func() {
-			Expect(filepath.Join(destDir, "internal", "adapter", "out", "persistence", "postgres")).To(BeADirectory())
-			Expect(filepath.Join(destDir, "internal", "adapter", "out", "persistence", "mysql")).NotTo(BeADirectory())
-			Expect(filepath.Join(destDir, "internal", "adapter", "out", "persistence", "mongo")).NotTo(BeADirectory())
+			Expect(filepath.Join(destDir, "internal", "infrastructure", "persistence", "postgres")).To(BeADirectory())
+			Expect(filepath.Join(destDir, "internal", "infrastructure", "persistence", "mysql")).NotTo(BeADirectory())
+			Expect(filepath.Join(destDir, "internal", "infrastructure", "persistence", "mongo")).NotTo(BeADirectory())
 		})
 
 		It("creates the HTTP adapter directory for the selected framework only", func() {
-			Expect(filepath.Join(destDir, "internal", "adapter", "in", "http", "gin")).To(BeADirectory())
-			Expect(filepath.Join(destDir, "internal", "adapter", "in", "http", "echo")).NotTo(BeADirectory())
-			Expect(filepath.Join(destDir, "internal", "adapter", "in", "http", "chi")).NotTo(BeADirectory())
+			Expect(filepath.Join(destDir, "internal", "infrastructure", "transport", "http", "gin")).To(BeADirectory())
+			Expect(filepath.Join(destDir, "internal", "infrastructure", "transport", "http", "echo")).NotTo(BeADirectory())
+			Expect(filepath.Join(destDir, "internal", "infrastructure", "transport", "http", "chi")).NotTo(BeADirectory())
 		})
 
 		It("writes an sgo.yaml that round-trips to the same selections", func() {

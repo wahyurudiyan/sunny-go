@@ -67,16 +67,19 @@ var _ = Describe("GenerateCode", func() {
 		for _, f := range []string{
 			filepath.Join("contract", "gen", "user", "user.pb.go"),
 			filepath.Join("contract", "gen", "user", "user_grpc.pb.go"),
-			filepath.Join("internal", "core", "domain", "user", "user_gen.go"),
-			filepath.Join("internal", "core", "domain", "user", "user.go"),
-			filepath.Join("internal", "core", "port", "in", "user_usecase.go"),
-			filepath.Join("internal", "core", "port", "out", "user_repository.go"),
-			filepath.Join("internal", "core", "service", "user_service.go"),
-			filepath.Join("internal", "adapter", "mapper", "user_mapper_gen.go"),
-			filepath.Join("internal", "adapter", "in", "http", "gin", "user_routes_gen.go"),
-			filepath.Join("internal", "adapter", "in", "grpc", "user_grpc_server_gen.go"),
-			filepath.Join("internal", "adapter", "out", "persistence", "memory", "user_repository_gen.go"),
-			filepath.Join("internal", "bootstrap", "wire_gen.go"),
+			filepath.Join("internal", "domain", "event", "event.go"),
+			filepath.Join("internal", "domain", "user", "user_gen.go"),
+			filepath.Join("internal", "domain", "user", "aggregate.go"),
+			filepath.Join("internal", "domain", "user", "repository.go"),
+			filepath.Join("internal", "domain", "user", "errors.go"),
+			filepath.Join("internal", "application", "user", "command_gen.go"),
+			filepath.Join("internal", "application", "ports", "event_publisher.go"),
+			filepath.Join("internal", "application", "user", "service.go"),
+			filepath.Join("internal", "infrastructure", "transport", "user_mapper_gen.go"),
+			filepath.Join("internal", "infrastructure", "transport", "http", "gin", "user_routes_gen.go"),
+			filepath.Join("internal", "infrastructure", "transport", "grpc", "user_grpc_server_gen.go"),
+			filepath.Join("internal", "infrastructure", "persistence", "memory", "user_repository_gen.go"),
+			filepath.Join("internal", "infrastructure", "bootstrap", "wire_gen.go"),
 		} {
 			Expect(filepath.Join(dir, f)).To(BeAnExistingFile(), f)
 		}
@@ -125,16 +128,12 @@ var _ = Describe("GenerateCode", func() {
 
 		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
 
-		servicePath := filepath.Join(dir, "internal", "core", "service", "user_service.go")
+		servicePath := filepath.Join(dir, "internal", "application", "user", "service.go")
 		content, err := os.ReadFile(servicePath)
 		Expect(err).NotTo(HaveOccurred())
 		stub := `panic("sgo: TODO implement GetUser")`
 		Expect(string(content)).To(ContainSubstring(stub))
-		body := `u, err := s.repo.Get(ctx, req.Id)
-			if err != nil {
-				return nil, err
-			}
-			return &user.UserResponse{User: u}, nil`
+		body := `return s.repo.Get(ctx, req.Id)`
 		updated := strings.Replace(string(content), stub, body, 1)
 		Expect(os.WriteFile(servicePath, []byte(updated), 0644)).To(Succeed())
 
@@ -220,8 +219,8 @@ var _ = Describe("GenerateCode with cache, search, and Mongo selected", func() {
 		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
 
 		for _, f := range []string{
-			filepath.Join("internal", "adapter", "out", "persistence", "mongo", "user_repository_gen.go"),
-			filepath.Join("internal", "adapter", "out", "persistence", "mongo", "conn_gen.go"),
+			filepath.Join("internal", "infrastructure", "persistence", "mongo", "user_repository_gen.go"),
+			filepath.Join("internal", "infrastructure", "persistence", "mongo", "conn_gen.go"),
 		} {
 			Expect(filepath.Join(dir, f)).To(BeAnExistingFile(), f)
 		}
@@ -233,60 +232,43 @@ var _ = Describe("GenerateCode with cache, search, and Mongo selected", func() {
 	})
 })
 
-const userServiceImplementation = `package service
+const userServiceImplementation = `package user
 
 import (
 	"context"
 
-	user "demo/internal/core/domain/user"
-	out "demo/internal/core/port/out"
+	domain "demo/internal/domain/user"
+	ports "demo/internal/application/ports"
 )
 
 type UserService struct {
-	repo out.UserRepository
+	repo      domain.UserRepository
+	publisher ports.EventPublisher
 }
 
-func NewUserService(repo out.UserRepository) *UserService {
-	return &UserService{repo: repo}
+func NewUserService(repo domain.UserRepository, publisher ports.EventPublisher) *UserService {
+	return &UserService{repo: repo, publisher: publisher}
 }
 
-func (s *UserService) CreateUser(ctx context.Context, req *user.CreateUserRequest) (*user.UserResponse, error) {
-	created, err := s.repo.Create(ctx, &user.User{Name: req.Name, Description: req.Description})
-	if err != nil {
-		return nil, err
-	}
-	return &user.UserResponse{User: created}, nil
+func (s *UserService) CreateUser(ctx context.Context, req *CreateUserRequest) (*domain.User, error) {
+	return s.repo.Create(ctx, &domain.User{Name: req.Name, Description: req.Description})
 }
 
-func (s *UserService) GetUser(ctx context.Context, req *user.GetUserRequest) (*user.UserResponse, error) {
-	u, err := s.repo.Get(ctx, req.Id)
-	if err != nil {
-		return nil, err
-	}
-	return &user.UserResponse{User: u}, nil
+func (s *UserService) GetUser(ctx context.Context, req *GetUserRequest) (*domain.User, error) {
+	return s.repo.Get(ctx, req.Id)
 }
 
-func (s *UserService) ListUsers(ctx context.Context, req *user.ListUsersRequest) (*user.ListUsersResponse, error) {
-	users, total, err := s.repo.List(ctx, req.Page, req.PageSize)
-	if err != nil {
-		return nil, err
-	}
-	return &user.ListUsersResponse{Users: users, Total: total}, nil
+func (s *UserService) ListUsers(ctx context.Context, req *ListUsersRequest) ([]*domain.User, error) {
+	items, _, err := s.repo.List(ctx, req.Page, req.PageSize)
+	return items, err
 }
 
-func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserRequest) (*user.UserResponse, error) {
-	updated, err := s.repo.Update(ctx, &user.User{Id: req.Id, Name: req.Name, Description: req.Description})
-	if err != nil {
-		return nil, err
-	}
-	return &user.UserResponse{User: updated}, nil
+func (s *UserService) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*domain.User, error) {
+	return s.repo.Update(ctx, &domain.User{Id: req.Id, Name: req.Name, Description: req.Description})
 }
 
-func (s *UserService) DeleteUser(ctx context.Context, req *user.DeleteUserRequest) (*user.DeleteUserResponse, error) {
-	if err := s.repo.Delete(ctx, req.Id); err != nil {
-		return nil, err
-	}
-	return &user.DeleteUserResponse{Success: true}, nil
+func (s *UserService) DeleteUser(ctx context.Context, req *DeleteUserRequest) error {
+	return s.repo.Delete(ctx, req.Id)
 }
 `
 
@@ -310,7 +292,7 @@ var _ = Describe("a generated and implemented project, running for real", func()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
 
-		servicePath := filepath.Join(dir, "internal", "core", "service", "user_service.go")
+		servicePath := filepath.Join(dir, "internal", "application", "user", "service.go")
 		Expect(os.WriteFile(servicePath, []byte(userServiceImplementation), 0644)).To(Succeed())
 
 		binPath := filepath.Join(dir, "bin", "demo")
@@ -406,13 +388,13 @@ var _ = Describe("a generated project with Postgres selected, running for real",
 		Expect(err).NotTo(HaveOccurred())
 		Expect(codegen.GenerateCode(dir, "user", cfg)).To(Succeed())
 
-		Expect(filepath.Join(dir, "internal", "adapter", "out", "persistence", "postgres", "user_repository_gen.go")).To(BeAnExistingFile())
+		Expect(filepath.Join(dir, "internal", "infrastructure", "persistence", "postgres", "user_repository_gen.go")).To(BeAnExistingFile())
 
-		wireContent, err := os.ReadFile(filepath.Join(dir, "internal", "bootstrap", "wire_gen.go"))
+		wireContent, err := os.ReadFile(filepath.Join(dir, "internal", "infrastructure", "bootstrap", "wire_gen.go"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(wireContent)).To(ContainSubstring("postgres.NewUserRepository(db)"), "must use the real adapter, not memory, once Postgres is selected")
 
-		servicePath := filepath.Join(dir, "internal", "core", "service", "user_service.go")
+		servicePath := filepath.Join(dir, "internal", "application", "user", "service.go")
 		Expect(os.WriteFile(servicePath, []byte(userServiceImplementation), 0644)).To(Succeed())
 
 		binPath := filepath.Join(dir, "bin", "demo")

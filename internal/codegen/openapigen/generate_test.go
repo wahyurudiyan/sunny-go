@@ -94,7 +94,7 @@ var _ = Describe("Generate", func() {
 		}
 		Expect(yaml.Unmarshal(data, &doc)).To(Succeed())
 
-		routesSrc, err := os.ReadFile(filepath.Join(dir, "internal", "adapter", "in", "http", "gin", "product_routes_gen.go"))
+		routesSrc, err := os.ReadFile(filepath.Join(dir, "internal", "infrastructure", "transport", "http", "gin", "product_routes_gen.go"))
 		Expect(err).NotTo(HaveOccurred())
 
 		verbToGin := map[string]string{"get": "GET", "post": "POST", "put": "PUT", "delete": "DELETE"}

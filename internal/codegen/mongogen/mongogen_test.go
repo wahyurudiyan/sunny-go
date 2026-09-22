@@ -34,7 +34,7 @@ var _ = Describe("Generate", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		p = core.Paths{Module: "demo", Entity: "user"}
-		destDir = filepath.Join(root, "internal", "adapter", "out", "persistence", "mongo")
+		destDir = filepath.Join(root, "internal", "infrastructure", "persistence", "mongo")
 	})
 
 	It("writes a repository using bson tags and the official mongo-driver API", func() {
@@ -55,8 +55,12 @@ var _ = Describe("Generate", func() {
 	It("produces a module that type-checks against the real mongo-driver API", func() {
 		Expect(mongogen.Generate(file, p, destDir)).To(Succeed())
 
-		domainDir := filepath.Join(root, "internal", "core", "domain", "user")
-		Expect(core.GenerateDomain(file, p, domainDir)).To(Succeed())
+		fd, err := sgoproto.Compile(protoDir, "user.proto")
+		Expect(err).NotTo(HaveOccurred())
+
+		domainDir := filepath.Join(root, "internal", "domain", "user")
+		Expect(core.GenerateEventKernel(filepath.Join(root, "internal", "domain", "event"))).To(Succeed())
+		Expect(core.GenerateAggregate(file, fd, p, domainDir)).To(Succeed())
 
 		Expect(os.WriteFile(filepath.Join(root, "go.mod"), []byte("module demo\n\ngo 1.22\n"), 0644)).To(Succeed())
 

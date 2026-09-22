@@ -92,7 +92,7 @@ var _ = Describe("the sgo CLI, driven as a real subprocess", func() {
 		Expect(err).NotTo(HaveOccurred(), out)
 		Expect(out).To(ContainSubstring("Generated code for product"))
 
-		domainContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "core", "domain", "product", "product_gen.go"))
+		domainContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "domain", "product", "product_gen.go"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(domainContent)).To(ContainSubstring("Price"), "the hand-edited price field should have made it into the generated domain struct")
 

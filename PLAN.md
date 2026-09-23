@@ -1171,6 +1171,110 @@ path/tree in the new README was captured from a real generated project,
 and the two docs-drift bugs found while cross-checking were fixed, not
 just noted.
 
+## Phase 18 — Sensitive-field protection: obfuscation, PII marking, `json_name` **(planned)**
+
+Full design in ARCHITECTURE.md §22, including the two verified findings
+that shape it: HTTP responses serialize the same `*domain.Entity` pointer
+a repository adapter may still be holding (`c.JSON` on the raw struct via
+plain `encoding/json`, not protojson), so masking has to be
+non-destructive there — while gRPC's `mapper.FromDomain` always builds a
+fresh wire struct per call, so masking during that construction is safe
+by construction. Also corrects something said earlier before either
+template had been read: protobuf's real `json_name` field option does
+not already flow through to sgo's HTTP output today, since that output's
+JSON tags come from sgo's own templates (`{{.Name}}`, the raw proto field
+name), not from protojson.
+
+Four decisions locked in via `AskUserQuestion` before any code:
+**`obfuscate_visible = N`** means "N real characters visible, the rest
+replaced by a fixed-length mask" (never a mask proportional to the real
+remaining length, which would itself leak the value's true length).
+**All three consumers** — HTTP/gRPC responses, structured logs, and
+OpenAPI docs — get the same treatment in this one phase, not split across
+phases. **A separate, behavior-free `(sgo.pii) = true` marker** ships
+alongside obfuscation, for a field that's sensitive enough to flag (docs/
+compliance) without necessarily being masked. And **`[json_name=...]`
+and `(sgo.obfuscate_visible)` compose on the same field** — renaming a
+field's wire key and masking its value are orthogonal and meant to be
+usable together.
+
+- [ ] `sgo/options.proto` gains its first `extend google.protobuf.FieldOptions`
+      block: `int32 obfuscate_visible = 50001;` and `bool pii = 50002;` —
+      one more vendored file accumulating fields across phases (12/15/16
+      already), not a new vendored file.
+- [ ] `internal/codegen/proto`'s `Field` IR gains `JSONName string`,
+      `ObfuscateVisible int32`, `HasObfuscate bool`. `JSONName` is read
+      from the raw `descriptorpb.FieldDescriptorProto.JsonName`, **only
+      when the proto source explicitly sets `[json_name=...]`** — never
+      from protoreflect's `.JSONName()` convenience accessor, which
+      always returns a value (protobuf's own computed default) and would
+      silently rename every existing field's JSON key the moment this
+      ships if used instead. `.JSONName` on the IR field defaults to
+      `.Name` (today's behavior) when no override is set.
+- [ ] `aggregate_gen.go.tmpl` and `cqrs_gen.go.tmpl` switch their
+      `` `json:"{{.Name}}"` `` tag to `` `json:"{{.JSONName}}"` `` —
+      byte-identical output for every field without an explicit
+      `[json_name=...]`, verified by a spec asserting an unmodified
+      proto regenerates unchanged.
+- [ ] Generated `obfuscate(value string, visible int) string` helper,
+      embedded once per generated project (not part of sgo's own
+      binary): passes through the first `visible` characters, replaces
+      the rest with a fixed-length mask regardless of the real remaining
+      length.
+- [ ] **HTTP/response masking, non-destructive.** A domain struct
+      (aggregate/value object/child entity — not request/command/query
+      DTOs, which are never serialized as a response) with at least one
+      `obfuscate_visible` field gets a generated `MarshalJSON() ([]byte,
+      error)` using a type-alias-embedded-in-an-anonymous-struct shadow
+      pattern, so the real struct is never mutated by serializing it.
+      Proven by a spec that writes a value, serializes an HTTP response,
+      then reads the same record straight from the repository and
+      asserts it's still unmasked.
+- [ ] **gRPC masking.** `grpc_server_gen.go.tmpl`'s
+      `mapper.<Entity>FromDomain` gains a masked assignment per
+      obfuscated field — safe without a shadow struct, since that
+      function already builds a brand-new wire struct every call.
+      Proven by a bufconn e2e spec asserting the client receives the
+      masked value while a direct repository read shows the real one.
+- [ ] **`LogValue() slog.Value`** generated for any message with at
+      least one `obfuscate_visible` field: every field emitted via the
+      matching `slog.<Type>` constructor, obfuscated fields passed
+      through `obfuscate()` first. A `pii`-only field (no obfuscation)
+      logs as-is, matching the decision that the plain marker carries no
+      masking behavior. Proven by a spec capturing `LogValue()`'s output
+      through a real `slog.TextHandler`/buffer and asserting the real
+      value never appears in the log line for an obfuscated field.
+- [ ] **OpenAPI.** `openapigen`'s `Schema` gains `x-sensitive: true` (and
+      `x-obfuscate-visible: N` when set) on a property backed by a
+      `pii`- or `obfuscate_visible`-marked field — vendor extensions,
+      always valid against the vendored meta-schemas (Phase 8), so the
+      document still validates.
+- [ ] **v1 constraints, stated rather than silently mishandled:**
+      `obfuscate_visible` only on a `string`-kind scalar field (a
+      mismatched type fails generation with a clear error); value must
+      be `>= 0`.
+- [ ] Ginkgo specs: option parsing (marked fields produce the expected
+      IR); the non-destructive-mutation regression spec (the most
+      important one — guards exactly the aliasing risk this design is
+      built around); the real HTTP e2e spec; the real gRPC e2e spec; the
+      OpenAPI vendor-extension spec; the `slog` redaction spec; the
+      type-mismatch and negative-value error-path specs; a spec
+      confirming a field with no `[json_name=...]`/no `obfuscate_visible`
+      regenerates byte-identical output to today.
+
+**Exit criteria:** a field marked `(sgo.obfuscate_visible) = N` shows a
+fixed-length-masked value (first N real characters, then a fixed mask)
+in HTTP JSON responses, gRPC responses, and any `slog` call passed the
+containing struct — while the real value stays intact wherever it's read
+directly (repository, application service), proven by a spec that writes
+a value and reads it back unmasked from the domain layer while the same
+data is masked over the wire and in logs. A field marked `(sgo.pii) =
+true` alone is flagged in the generated OpenAPI doc and otherwise behaves
+exactly as before. An explicit `[json_name="..."]` on a field overrides
+its generated JSON key in sgo's own HTTP serialization/binding without
+changing the default key for any other field. Every existing generated-
+project e2e spec still passes with no proto changes.
+
 ## Non-goals (for now)
 
 - Multi-service monorepo orchestration beyond one `sgo.yaml` per repo.
@@ -1232,6 +1336,27 @@ just noted.
   entity response wrapper shape (`Get`/`Create`/`Update`'s convention).
   Both fail generation with a clear error rather than guessing. Revisit
   if a real use case needs either.
+- **A masking strategy other than "fixed mask after a visible prefix"**
+  (last-N-visible for card numbers, full redaction, hash-based masking,
+  a configurable mask character/length) — Phase 18 ships the one
+  mechanism its locked `AskUserQuestion` decisions scope to. Revisit if
+  a real use case needs a different shape.
+- **Obfuscating a non-`string` field** (numeric, bool, message, repeated,
+  or map) — Phase 18's masking mechanism only makes sense for a
+  string-shaped value; a mismatched field type fails generation with a
+  clear error rather than guessing. Revisit only with a concrete example
+  of what "obfuscate an int32" should even mean.
+- **Encryption at rest, or any control against direct database access**
+  — Phase 18 is presentation-layer masking (what a response/log shows),
+  not a security boundary against someone with repository/DB access.
+  Not a substitute for real encryption-at-rest or access control; document
+  this distinction clearly rather than let `obfuscate_visible` be mistaken
+  for one.
+- **Enforcing OpenAPI's `x-sensitive`/`x-obfuscate-visible` at request
+  time** — Phase 18's OpenAPI output is documentation only, the same way
+  every other `openapigen` vendor extension is; it doesn't gate what a
+  client can request or a server will return. Revisit only if a real
+  policy-enforcement use case is requested.
 
 ## Sequencing notes
 

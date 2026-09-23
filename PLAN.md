@@ -1275,6 +1275,81 @@ its generated JSON key in sgo's own HTTP serialization/binding without
 changing the default key for any other field. Every existing generated-
 project e2e spec still passes with no proto changes.
 
+## Phase 19 — `sgo update`: self-updating the CLI **(planned)**
+
+Full design in ARCHITECTURE.md §23. `sgo`'s only install path today is
+`go install github.com/wahyurudiyan/sunny-go/cmd/sgo@latest` (README) —
+no goreleaser, no CI-published binaries, no GitHub Release actually
+published yet. That rules out a rustup-style self-replacing binary
+updater for v1; the realistic build is a thin wrapper around the same
+`go install` command the README already tells users to run by hand.
+
+Three decisions locked in via `AskUserQuestion` before any code: **wrap
+`go install .../cmd/sgo@<version>`**, not a binary self-replacer — no new
+dependency beyond the Go toolchain everyone already needs, real
+release-binary infra explicitly deferred to its own future phase.
+**Check the latest version before reinstalling** (via `go list -m
+-versions`, the module proxy `go install ...@latest` itself already
+consults) rather than blindly re-running `go install` every time — better
+UX, at the stated cost that it only reports something meaningful once
+real semver tags exist on the module proxy (the still-pending `v0.1.0`
+tag, and every version after it). **Ship `--check` and `--version` in
+this same phase**, not deferred — cheap once version resolution exists
+for the bare command.
+
+- [ ] `internal/commands/update.go` — new `sgo update` command wired into
+      `rootCmd`, following the existing command-file-per-subcommand
+      layout (`init.go`, `generate.go`, `list.go`, `openapi.go`, `ui.go`).
+- [ ] Version resolution: `go list -m -versions -json
+      github.com/wahyurudiyan/sunny-go` via `os/exec`, parsed for the
+      highest semver tag. **v1 constraint, stated rather than silently
+      wrong:** an untagged repo (or a proxy/network failure) is reported
+      as a clear "no tagged releases found" / error, never guessed at or
+      silently treated as "already up to date."
+- [ ] Bare `sgo update`: resolves latest, compares against the running
+      binary's `commands.Version`, prints "already up to date" and exits
+      cleanly if equal, otherwise prints "updating vX.Y.Z → vA.B.C" and
+      runs `go install github.com/wahyurudiyan/sunny-go/cmd/sgo@<latest>`
+      via `os/exec` with output streamed through (build errors visible,
+      not swallowed).
+- [ ] `--check`: resolves and prints the latest version (and whether it
+      differs from the running one) without installing anything — same
+      resolution codepath, skips the `go install` step.
+- [ ] `--version vX.Y.Z`: installs that exact version instead of latest,
+      skipping the "already up to date" short-circuit (an explicit
+      version always runs `go install`, including a downgrade) — the
+      printed "vX.Y.Z → vA.B.C" line always makes the direction plain
+      before it runs, since there's no confirmation prompt.
+- [ ] **GOBIN mismatch warning.** After a successful `go install`,
+      compare `go env GOBIN` (falling back to `$GOPATH/bin`, then
+      `$HOME/go/bin`) against `os.Executable()`'s path (the binary
+      currently running `sgo update`). Print an explicit warning naming
+      both paths when they differ, rather than reporting a bare
+      "updated" that leaves the user silently running the old binary on
+      their next invocation.
+- [ ] Ginkgo specs: version-resolution parsing (a real `go list -m
+      -versions -json` output fixture, plus the untagged/error-path
+      case); the compare-and-skip logic (equal versions short-circuit,
+      no `go install` call); `--check` never invoking `go install`;
+      `--version` always invoking it, downgrade included; the GOBIN-
+      mismatch warning firing when `os.Executable()` and the resolved
+      `GOBIN` path differ, and staying silent when they match. The
+      `go install` step itself is exercised against a real throwaway
+      `GOBIN` in a temp dir (same "verify against real tools, not
+      mocked" standard as the rest of this repo's e2e specs), not
+      stubbed out.
+
+**Exit criteria:** `sgo update` against a real tagged version reports
+"already up to date" and installs nothing when the running binary
+already matches the latest tag; against an older tag, it prints the
+version transition and successfully reinstalls via a real `go install`
+run, verified by checking the binary at the resolved `GOBIN` path
+afterward. `sgo update --check` never modifies anything. `sgo update
+--version vX.Y.Z` installs exactly that version, downgrade included. A
+GOBIN/running-binary path mismatch produces a visible warning naming
+both paths. Against a repo with no tags, `sgo update` reports plainly
+that there's nothing to compare against rather than guessing.
+
 ## Non-goals (for now)
 
 - Multi-service monorepo orchestration beyond one `sgo.yaml` per repo.
@@ -1357,6 +1432,22 @@ project e2e spec still passes with no proto changes.
   every other `openapigen` vendor extension is; it doesn't gate what a
   client can request or a server will return. Revisit only if a real
   policy-enforcement use case is requested.
+- **A real release-binary pipeline** (goreleaser, CI-published per-OS/
+  arch binaries, install via Homebrew/curl/package manager without a Go
+  toolchain) — explicitly deferred (`AskUserQuestion`): Phase 19's
+  `sgo update` wraps `go install`, the only install path that exists
+  today. Worth its own phase if `sgo` ever needs to be installable
+  without a Go toolchain on `PATH`.
+- **A confirmation prompt before `sgo update` runs**, including for a
+  `--version` downgrade — Phase 19 always prints the version transition
+  before acting, but doesn't block on a yes/no; an explicit `sgo update`
+  invocation (or an explicit `--version`) is itself the confirmation,
+  consistent with how every other sgo command runs non-interactively by
+  default outside the opt-in wizard (§5).
+- **Automatic/background updates, or update-checking on every command
+  invocation** — `sgo update` is something a user runs deliberately;
+  nothing else in sgo silently phones home to check for a new version.
+  Revisit only if requested.
 
 ## Sequencing notes
 

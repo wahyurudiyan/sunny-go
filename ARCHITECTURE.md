@@ -1232,6 +1232,113 @@ schema's `type`/`required`/etc.
   to. Revisit if a real need for a different strategy shows up (PLAN.md
   Non-goals).
 
+## 23. `sgo update` — self-updating the CLI **(planned, Phase 19)**
+
+Verified before designing this, not assumed: `sgo`'s only documented
+install path is `go install github.com/wahyurudiyan/sunny-go/cmd/sgo@latest`
+(README's Install section, and the commit that introduced it, "Make sgo
+installable via go install"). There is no goreleaser config, no CI job
+publishing prebuilt per-OS/arch binaries, and no GitHub Release has
+actually been published yet (`v0.1.0`'s tag/release is still pending, a
+carryover from before this phase). That rules out a rustup/`gh`-style
+self-replacing binary updater for v1 — building one would mean standing
+up a release pipeline that doesn't exist, for a project that has never
+shipped a binary release. The thing that's actually realistic, and
+matches how every `sgo` user has already installed the tool, is a thin
+wrapper around the same `go install` command the README already tells
+people to run.
+
+Three decisions locked in via `AskUserQuestion` before any code:
+
+- **Mechanism: wrap `go install .../cmd/sgo@<version>`**, not a binary
+  self-replacer. Requires the Go toolchain on `PATH` — already a hard
+  requirement for anyone using `sgo` today (§1, no `protoc`/`buf`
+  binary needed, but Go itself always is), so this introduces no new
+  dependency. Explicitly deferred: a real release-binary pipeline
+  (goreleaser + CI + per-OS/arch artifacts) is a separate, materially
+  larger project, worth its own phase if `sgo` ever needs to be
+  installable without a Go toolchain (e.g. via Homebrew or a plain
+  curl-a-binary script).
+- **Check the latest version before reinstalling**, rather than blindly
+  re-running `go install ...@latest` every time. `sgo update` resolves
+  the latest available version first (from the Go module proxy, the
+  same source `go install ...@latest` itself would consult) and compares
+  it against the running binary's own `commands.Version` — printing
+  "already up to date" and doing nothing if they match, or "updating
+  vX.Y.Z → vA.B.C" and only then re-running `go install` if they don't.
+  Better UX (an explicit answer to "is there anything new," not just
+  "I ran a command and something happened"), for one extra network call
+  reusing infrastructure that already has to exist (the module proxy
+  `go install` itself depends on). The real cost, made explicit rather
+  than silently glossed over: this only reports something meaningful
+  once real semver tags exist on the module proxy — which depends on
+  `v0.1.0`'s tag (and every version after it) actually being pushed,
+  the same still-open action from before this phase. Until then,
+  `sgo update` has nothing to compare against and says so plainly
+  rather than pretending to succeed.
+- **Ship `--check` and `--version` alongside the bare command** in this
+  same phase, not deferred: `sgo update --check` resolves and prints the
+  latest version without installing anything (same version-resolution
+  codepath, skips the `go install` step); `sgo update --version vX.Y.Z`
+  installs a specific version instead of latest (useful to pin, or to
+  downgrade after a bad update). Both are cheap once the version-check
+  mechanism exists for the bare command, and match the shape of every
+  other CLI self-updater (`rustup update --check`, `gh extension
+  upgrade`) users are likely to already expect.
+
+### Version resolution
+
+`go list -m -versions -json github.com/wahyurudiyan/sunny-go` queries the
+Go module proxy for every published version of sgo's own module — the
+exact mechanism `go install .../cmd/sgo@latest` itself uses internally to
+resolve "latest," reused here rather than hand-rolling a second HTTP call
+against `proxy.golang.org` directly (`go list` already handles
+`GOPROXY`/`GONOSUMCHECK`/offline-module-cache configuration correctly;
+a hand-rolled HTTP client wouldn't, for free). The highest semver tag in
+the result is "latest." **v1 constraint, stated rather than silently
+wrong:** this command only ever sees *published, tagged* versions — a
+`go install ...@latest` run against a repo with zero tags resolves to the
+latest commit on the default branch instead (pseudo-version), which
+`sgo update` treats as "nothing to compare against" and reports plainly,
+rather than guessing at a version number for a commit that was never
+tagged.
+
+### Update execution
+
+Once a target version is resolved (latest, or an explicit `--version`),
+`sgo update` shells out to `go install
+github.com/wahyurudiyan/sunny-go/cmd/sgo@<version>` — the identical
+command a user would type by hand, run via `os/exec` with the resolved
+version substituted in, output streamed through so build errors are
+visible rather than swallowed. `go install` itself already handles
+atomic binary replacement (writes to a temp file, renames into place) —
+no custom self-replace logic needed.
+
+**GOBIN mismatch, stated rather than silently misleading.** `go install`
+places the new binary at `go env GOBIN` (or `$GOPATH/bin`, or
+`$HOME/go/bin` if neither is set) — not necessarily the same path as the
+binary `sgo update` is currently running from (`os.Executable()`), if a
+user has copied/symlinked `sgo` elsewhere, or has multiple Go
+environments. `sgo update` compares the two paths after a successful
+install and prints an explicit warning naming both paths when they
+differ ("installed to ~/go/bin/sgo, but this sgo is running from
+/usr/local/bin/sgo — update your PATH or copy the new binary") rather
+than reporting a bare "updated" that leaves the user running the old
+binary on their next invocation with no idea why.
+
+### v1 constraints (stated, not silently unsupported)
+
+- Version comparison only works once real semver tags exist on the
+  module proxy; against an untagged repo, `sgo update` reports "no
+  tagged releases found" rather than a wrong or fabricated version.
+- No downgrade confirmation prompt — `--version` installs exactly what's
+  asked, including a version older than what's currently running; the
+  printed "vX.Y.Z → vA.B.C" line always makes the direction plain before
+  it runs.
+- Offline / registry-unreachable: `go list -m -versions` failing (no
+  network, proxy down) is reported as a clear error, not retried or
+  silently treated as "already up to date."
+
 ## Testing strategy
 
 All Go tests — in `sgo` itself and in what it generates — are

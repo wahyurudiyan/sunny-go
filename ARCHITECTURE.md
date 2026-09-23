@@ -1054,6 +1054,184 @@ through a real `sgo init` → proto → `sgo generate code` → `go build`/
 `go run` project, and a hand-written owned-stub body survives a second
 `generate code` run the same way `service.go` already does.
 
+## 22. Sensitive-field protection: obfuscation, PII marking, and `json_name` **(planned, Phase 18)**
+
+Verified against the real generated templates before writing any of this
+design, not assumed: `internal/codegen/httpgen/templates/gin_routes.go.tmpl`
+serializes HTTP responses by calling `c.JSON` directly on the same
+`*domain.Entity` (or `[]*domain.Entity`) pointer the application service
+returned — Go's standard `encoding/json`, not real protojson, and not a
+copy. `internal/codegen/core/templates/aggregate_gen.go.tmpl` and
+`cqrs_gen.go.tmpl` both hardcode that struct's `json:"..."` tag to the raw
+proto field name (`{{.Name}}`) themselves, rather than deriving it from
+protoc-gen-go/protojson output. Two consequences follow that materially
+shape this design — and correct something said earlier in conversation,
+before either template had actually been read: real protobuf's own
+`[json_name = "..."]` field option does **not** already "just work" for
+sgo's HTTP output the way it would in a project that serializes wire types
+directly — sgo has to read it out of the descriptor and apply it itself,
+in its own templates. And masking a field by mutating the struct sgo's
+about to serialize is unsafe by default: that struct is very often the
+exact instance a repository adapter is holding (the in-memory adapter
+stores pointers; a caller's `Update` handler reads-modifies-writes the
+same value `Get` returned earlier), so writing a masked value into it
+before `c.JSON` would corrupt the stored data for every future read, not
+just this one response.
+
+gRPC's path is different, and safe for this by construction:
+`internal/codegen/grpcgen/templates/grpc_server_gen.go.tmpl` never
+serializes the domain struct itself — every response goes through
+`mapper.<Entity>FromDomain(resp)`, which builds a **brand-new**
+`*wire.<Entity>` struct field-by-field on every call. Masking during that
+construction carries no aliasing risk at all, because nothing else holds a
+reference to the struct being built.
+
+Four decisions locked in via `AskUserQuestion` before any of this:
+
+- **`(sgo.obfuscate_visible) = N` means "show the first N characters, mask
+  the rest with a fixed-length mask"** — not a mask proportional to the
+  real remaining length (one `*` per hidden character), because a
+  proportional mask leaks the true length of the underlying value: a
+  `***` vs `**********` mask on an otherwise-identical field tells a
+  reader the real ID number is 3 vs 10 digits long, which is itself
+  sensitive information. A fixed mask — `"123" + "*****"` regardless of
+  how long the real remainder is — leaks nothing beyond "this value is
+  masked."
+- **All three consumers get the same treatment**: HTTP and gRPC response
+  bodies, structured logs (via a generated `slog.LogValuer`), and
+  OpenAPI documentation (a vendor extension flagging the field, not
+  enforcement — OpenAPI describes a contract, it doesn't run at request
+  time).
+- **A separate, behavior-free `(sgo.pii) = true` marker exists alongside
+  obfuscation** — classification/documentation only, for a field that's
+  sensitive enough to flag for compliance review or data-retention audits
+  but where the team has decided obfuscation isn't the right control
+  (e.g. it's encrypted at rest instead, or only ever visible to admins).
+  Marking a field `pii` alone changes nothing about serialization or
+  logging; only `obfuscate_visible` does that. A field can carry both,
+  either, or neither.
+- **`[json_name = "..."]` (real protobuf syntax, not a custom sgo
+  extension) and `(sgo.obfuscate_visible)` compose on the same field** —
+  renaming a field's wire key and obfuscating its value are orthogonal,
+  and a field like a government ID number is exactly the kind of field a
+  project is likely to want both on at once (rename `id_number` to
+  `idNumber` for a JS client, and obfuscate its value).
+
+### Proto surface
+
+`sgo/options.proto` (vendored, extended across Phases 12/15/16 already —
+one file accumulating fields across phases, not a new vendored file per
+phase) gains its first `FieldOptions` extension block:
+
+```proto
+extend google.protobuf.FieldOptions {
+  // obfuscate_visible marks this field as sensitive and masks it
+  // wherever sgo serializes or logs the containing message: the first
+  // N characters of the real value pass through, the rest is replaced
+  // with a fixed-length mask (never proportional to the real length,
+  // which would itself leak information). 0 means fully masked. Unset
+  // (proto3's int32 zero value) is indistinguishable from 0 on the
+  // wire, so sgo's IR tracks presence separately rather than treating
+  // "0" as "don't obfuscate".
+  int32 obfuscate_visible = 50001;
+
+  // pii flags this field as sensitive for documentation/classification
+  // purposes only (surfaced in generated OpenAPI docs). Independent of
+  // obfuscate_visible: does not by itself change serialization or log
+  // output. A field can be pii, obfuscated, both, or neither.
+  bool pii = 50002;
+}
+```
+
+`json_name` needs no new extension — it's already a first-class part of
+`FieldDescriptorProto` (field 10), set via the real
+`[json_name = "..."]` field option syntax every `protoc`-family tool
+recognizes. sgo's job is only to read it and stop silently ignoring it.
+
+### IR and codegen changes
+
+`internal/codegen/proto`'s `Field` IR gains `JSONName string`,
+`ObfuscateVisible int32`, and `HasObfuscate bool` (the presence flag
+proto3 doesn't give for free on a scalar `int32`). `JSONName` is
+populated **only when the proto source explicitly sets
+`[json_name = "..."]`** — read from the raw
+`descriptorpb.FieldDescriptorProto.JsonName` via the field's
+`protoreflect.FieldDescriptor`, not from the convenience `.JSONName()`
+accessor, which always returns a value (protobuf's own computed
+lowerCamelCase default when nothing was set explicitly). Falling back to
+that computed default here would silently rename the JSON key of every
+existing field in every already-generated project the moment this ships —
+sgo's own default has always been the raw snake_case field name, matching
+`.Name`, and that has to keep being the default when nothing is set, for
+the same "generation is a promise, not a surprise" reason every other sgo
+default is preserved (§6).
+
+Every place that currently emits `` `json:"{{.Name}}"` `` —
+`aggregate_gen.go.tmpl`, and `cqrs_gen.go.tmpl`'s command/query DTOs —
+switches to `` `json:"{{.JSONName}}"` ``, where `.JSONName` on the IR
+field defaults to `.Name` when no override was set, so every field
+without an explicit `[json_name=...]` renders byte-identical output to
+today.
+
+**Response masking (HTTP + gRPC), built around the aliasing risk above,
+not despite it:**
+
+- For a message with at least one `obfuscate_visible` field, the domain
+  struct (aggregate, value object, or child entity — request/command/
+  query DTOs are write-only and never serialized as a response, so
+  they're excluded) gets a generated `MarshalJSON() ([]byte, error)`
+  method using a non-mutating shadow-struct pattern: a local type alias
+  of the real struct, embedded into an anonymous struct that
+  re-declares only the obfuscated field(s) with the masked value, then
+  marshaled. The real struct itself is never written to — `json.Marshal`
+  sees the shadow; the original stays intact wherever a repository or
+  map still holds a pointer to it. A round-trip spec (write a value,
+  serialize an HTTP response, then read the same record straight from
+  the repository) is the concrete way this gets proven, not just
+  asserted.
+- gRPC's `mapper.<Entity>FromDomain` template gains one line per
+  obfuscated field: mask during the field assignment that already builds
+  the fresh `*wire.<Entity>` struct. No shadow-struct needed here —
+  there's no aliasing to protect against, the struct being written to is
+  already brand-new every call.
+- Both paths call the same generated helper (`obfuscate(value string,
+  visible int) string`, embedded once per generated project — not part
+  of sgo's own binary): visible characters pass through unchanged,
+  everything after is replaced by a fixed-length mask string regardless
+  of the real remaining length. **v1 constraint, stated rather than
+  silently mishandled:** `obfuscate_visible` is only valid on a
+  `string`-kind field; a mismatched type (int32, bool, message, etc.)
+  fails generation with a clear error rather than guessing how to
+  "obfuscate" a number.
+
+**Structured logs.** A message with at least one `obfuscate_visible`
+field also gets a generated `LogValue() slog.Value` method: every field
+is emitted via the matching `slog.<Type>` constructor, with obfuscated
+fields passed through the same `obfuscate()` helper first. A field marked
+only `pii` (no obfuscation) is logged as-is — consistent with the
+decision above that the plain marker carries no masking behavior; a team
+that wants a `pii`-only field kept out of logs too has a reason to also
+mark it `obfuscate_visible`, not a gap here.
+
+**OpenAPI.** `openapigen`'s `Schema` type gains an `x-sensitive: true`
+vendor extension (and `x-obfuscate-visible: N` when set) on any property
+backed by a `pii`- or `obfuscate_visible`-marked field. Vendor extensions
+(the `x-` prefix) are always valid against the vendored OpenAPI
+meta-schemas (§8/Phase 8) — documentation only, doesn't change the
+schema's `type`/`required`/etc.
+
+### v1 constraints (stated, not silently unsupported)
+
+- `obfuscate_visible` is only valid on a `string`-kind scalar field;
+  anything else (numeric, bool, message, repeated) fails generation with
+  a clear error rather than guessing how to mask it.
+- `obfuscate_visible` must be `>= 0`; a negative value fails generation.
+- No masking strategy beyond "fixed mask after a visible prefix" in this
+  phase — no last-N-visible (for card numbers), no full redaction, no
+  hash-based masking. The one mechanism the locked decisions above scope
+  to. Revisit if a real need for a different strategy shows up (PLAN.md
+  Non-goals).
+
 ## Testing strategy
 
 All Go tests — in `sgo` itself and in what it generates — are

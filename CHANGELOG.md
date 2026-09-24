@@ -5,6 +5,35 @@ All notable changes to `sgo` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-09-24
+
+Sensitive-field protection, described in full in `ARCHITECTURE.md` §22
+and `PLAN.md` Phase 18.
+
+### Added
+
+- **`(sgo.obfuscate_visible) = N`** (field, `string` only) — masks the
+  field wherever sgo serializes or logs the containing message: the
+  first `N` real characters stay visible, the rest is replaced by a
+  fixed-length mask (never proportional to the real remaining length,
+  which would itself leak information). Applies to HTTP responses (a
+  generated, non-mutating `MarshalJSON`), gRPC responses (masked during
+  the wire-struct construction, which already builds a fresh struct
+  every call), and structured logs (a generated `slog.LogValuer`, on
+  both domain structs and CQRS command/query DTOs).
+- **`(sgo.pii) = true`** (field) — a separate, behavior-free
+  classification marker: flags the field `x-sensitive` in generated
+  OpenAPI docs, changes nothing about serialization or logging by
+  itself.
+- **Real protobuf `[json_name = "..."]` now honored** in sgo's own
+  generated JSON tags (domain structs, CQRS DTOs) and in the generated
+  OpenAPI doc's property keys — previously ignored, since sgo's HTTP
+  output serializes via plain `encoding/json` on its own generated
+  struct tags, not protojson. Unset, a field's JSON key is unchanged
+  from every prior release.
+- `internal/domain/mask` — the `Obfuscate` helper every entity's
+  generated masking code calls into, generated once per project.
+
 ## [0.2.0] - 2026-09-22
 
 Loading indicators, and `sgo run [--debug]` with a live config

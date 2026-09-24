@@ -51,6 +51,14 @@ func GenerateAggregate(f *sgoproto.File, fd protoreflect.FileDescriptor, p Paths
 		}
 	}
 
+	needsMasking := aggregate.HasObfuscatedFields()
+	for _, m := range valueObjects {
+		needsMasking = needsMasking || m.HasObfuscatedFields()
+	}
+	for _, m := range childEntities {
+		needsMasking = needsMasking || m.HasObfuscatedFields()
+	}
+
 	genData := struct {
 		Package         string
 		AggregateName   string
@@ -59,6 +67,8 @@ func GenerateAggregate(f *sgoproto.File, fd protoreflect.FileDescriptor, p Paths
 		DomainEvents    []sgoproto.Message
 		ChildEntities   []sgoproto.Message
 		EventImportPath string
+		MaskImportPath  string
+		NeedsMasking    bool
 	}{
 		Package:         p.Entity,
 		AggregateName:   aggregateName,
@@ -67,6 +77,8 @@ func GenerateAggregate(f *sgoproto.File, fd protoreflect.FileDescriptor, p Paths
 		DomainEvents:    domainEvents,
 		ChildEntities:   childEntities,
 		EventImportPath: p.EventImportPath(),
+		MaskImportPath:  p.MaskImportPath(),
+		NeedsMasking:    needsMasking,
 	}
 
 	genPath := filepath.Join(destDir, p.Entity+"_gen.go")
@@ -161,6 +173,17 @@ func GenerateDomainErrors(fd protoreflect.FileDescriptor, p Paths, destDir strin
 func GenerateEventKernel(destDir string) error {
 	path := filepath.Join(destDir, "event.go")
 	return writeGoFile("templates/domain_event_kernel_gen.go.tmpl", struct{}{}, path)
+}
+
+// GenerateMaskKernel writes internal/domain/mask/mask.go
+// (ARCHITECTURE.md §22): the Obfuscate helper every entity's
+// masking-aware MarshalJSON/LogValue, and the infra mapper's gRPC
+// masking, call into. Fixed content, no hand-written part — always
+// overwritten, once per project rather than once per entity, the same
+// as GenerateEventKernel.
+func GenerateMaskKernel(destDir string) error {
+	path := filepath.Join(destDir, "mask.go")
+	return writeGoFile("templates/mask_gen.go.tmpl", struct{}{}, path)
 }
 
 func messageNames(mds []protoreflect.MessageDescriptor) []string {

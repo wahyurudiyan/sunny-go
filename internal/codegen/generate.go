@@ -66,6 +66,9 @@ func GenerateCode(projectDir, name string, cfg *config.Config) error {
 	if err := core.GenerateEventKernel(filepath.Join(projectDir, "internal", "domain", "event")); err != nil {
 		return err
 	}
+	if err := core.GenerateMaskKernel(filepath.Join(projectDir, "internal", "domain", "mask")); err != nil {
+		return err
+	}
 	if err := core.GenerateAggregate(file, fd, p, domainDir); err != nil {
 		return err
 	}

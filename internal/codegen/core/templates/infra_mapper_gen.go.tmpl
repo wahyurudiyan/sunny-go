@@ -18,6 +18,9 @@ import (
 {{- if .RequestDTOs}}
 	app "{{.ApplicationImportPath}}"
 {{- end}}
+{{- if .NeedsMasking}}
+	mask "{{.MaskImportPath}}"
+{{- end}}
 )
 
 var validator = mustValidator()
@@ -81,6 +84,12 @@ func {{.Name}}FromDomain(d *domain.{{.Name}}) *wire.{{.Name}} {
 {{- else}}
 	out.{{.GoName}} = {{.MessageType}}FromDomain(d.{{.GoName}})
 {{- end}}
+{{- else if .HasObfuscateVisible}}
+	// (sgo.obfuscate_visible): masked here, not in ToDomain above — this
+	// builds a brand-new wire struct every call, so there's no aliasing
+	// risk the way there would be mutating an existing one in place
+	// (ARCHITECTURE.md §22).
+	out.{{.GoName}} = mask.Obfuscate(d.{{.GoName}}, {{.ObfuscateVisible}})
 {{- else}}
 	out.{{.GoName}} = d.{{.GoName}}
 {{- end}}

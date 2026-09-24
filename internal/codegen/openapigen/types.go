@@ -82,4 +82,12 @@ type Schema struct {
 	Minimum    *float64           `yaml:"minimum,omitempty" json:"minimum,omitempty"`
 	Items      *Schema            `yaml:"items,omitempty" json:"items,omitempty"`
 	Properties map[string]*Schema `yaml:"properties,omitempty" json:"properties,omitempty"`
+
+	// Sensitive and ObfuscateVisible are documentation-only vendor
+	// extensions (ARCHITECTURE.md §22) for a field marked (sgo.pii) or
+	// (sgo.obfuscate_visible) — never set on a bare $ref schema (see
+	// fieldToSchema), so they're always valid alongside this type's
+	// other fields under both OpenAPI 3.0 and 3.1.
+	Sensitive        bool   `yaml:"x-sensitive,omitempty" json:"x-sensitive,omitempty"`
+	ObfuscateVisible *int32 `yaml:"x-obfuscate-visible,omitempty" json:"x-obfuscate-visible,omitempty"`
 }

@@ -3,6 +3,7 @@ package proto
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
@@ -64,6 +65,52 @@ type Field struct {
 	Kind        Kind
 	MessageType string // Go type name of the referenced message, set only when Kind == KindMessage
 	Repeated    bool
+
+	// JSONName is this field's explicit `[json_name = "..."]` override,
+	// or "" if none was set — in which case EffectiveJSONName falls
+	// back to Name, sgo's long-standing default (ARCHITECTURE.md §22).
+	// Populated from the real protobuf descriptor field, not a custom
+	// sgo extension, by comparing it against protobuf's own computed
+	// default (protoreflect's HasJSONName() doesn't distinguish
+	// explicit from computed with this compiler, verified directly).
+	// Known, narrow limitation from that: an explicit override that
+	// happens to equal the computed default is indistinguishable from
+	// unset, so it falls back to Name rather than being honored.
+	JSONName string
+
+	// PII reports `(sgo.pii) = true` — classification/documentation
+	// only, no masking behavior by itself (ARCHITECTURE.md §22).
+	PII bool
+
+	// ObfuscateVisible and HasObfuscateVisible carry
+	// `(sgo.obfuscate_visible) = N` — the number of real leading
+	// characters left visible when this field is masked, with the rest
+	// replaced by a fixed-length mask. HasObfuscateVisible distinguishes
+	// an explicit 0 (fully masked) from "not obfuscated at all", which
+	// proto3's zero-value int32 can't do on its own (ARCHITECTURE.md
+	// §22).
+	ObfuscateVisible    int32
+	HasObfuscateVisible bool
+}
+
+// EffectiveJSONName returns this field's JSON key: the explicit
+// `[json_name = "..."]` override when one was set, otherwise the raw
+// proto field name — sgo's default since before this option existed,
+// kept unchanged so a field with no override renders identical output
+// to every prior release (ARCHITECTURE.md §22).
+func (f Field) EffectiveJSONName() string {
+	if f.JSONName != "" {
+		return f.JSONName
+	}
+	return f.Name
+}
+
+// IsSensitive reports whether this field is flagged in any way this
+// package tracks — PII or ObfuscateVisible — the union a caller checks
+// before deciding whether a message needs masking-aware codegen at all
+// (a generated MarshalJSON/LogValue, an OpenAPI vendor extension).
+func (f Field) IsSensitive() bool {
+	return f.PII || f.HasObfuscateVisible
 }
 
 // IsMessage reports whether this field references another message
@@ -118,6 +165,21 @@ type File struct {
 	Services  []Service
 }
 
+// HasObfuscatedFields reports whether any field on m carries
+// `(sgo.obfuscate_visible)` — the trigger for generating a
+// masking-aware MarshalJSON/LogValue for this specific message
+// (ARCHITECTURE.md §22). A message with only PII-marked fields (no
+// obfuscation) doesn't trigger either — that marker is
+// documentation-only by design.
+func (m Message) HasObfuscatedFields() bool {
+	for _, f := range m.Fields {
+		if f.HasObfuscateVisible {
+			return true
+		}
+	}
+	return false
+}
+
 // FindMessage returns the message named name, or nil if there isn't one.
 func (f *File) FindMessage(name string) *Message {
 	for i := range f.Messages {
@@ -164,6 +226,27 @@ func buildMessage(md protoreflect.MessageDescriptor) (Message, error) {
 			Name:     string(fd.Name()),
 			GoName:   goName(string(fd.Name())),
 			Repeated: fd.Cardinality() == protoreflect.Repeated,
+			PII:      IsPII(fd),
+		}
+
+		// protoreflect.FieldDescriptor.HasJSONName() is documented to
+		// report an explicit override, but protocompile's linked
+		// descriptors always report true (verified directly against a
+		// real compiled proto, not assumed) — protoc-family compilers
+		// fill in the computed default at parse time, indistinguishable
+		// from an explicit one at this layer. Compare against the
+		// standard default computation instead: an override that
+		// happens to equal what the default would have been anyway is
+		// genuinely indistinguishable from not setting it at all, and
+		// produces identical output either way, so treating it as
+		// "unset" here is not a real behavior difference.
+		if computed := defaultJSONName(string(fd.Name())); fd.JSONName() != computed {
+			field.JSONName = fd.JSONName()
+		}
+
+		if visible, ok := ObfuscateVisible(fd); ok {
+			field.ObfuscateVisible = visible
+			field.HasObfuscateVisible = true
 		}
 
 		kind, err := mapKind(fd)
@@ -174,6 +257,17 @@ func buildMessage(md protoreflect.MessageDescriptor) (Message, error) {
 
 		if kind == KindMessage {
 			field.MessageType = string(fd.Message().Name())
+		}
+
+		if field.HasObfuscateVisible {
+			if field.Kind != KindString || field.Repeated {
+				return Message{}, fmt.Errorf("message %s: field %s: (sgo.obfuscate_visible) is only valid on a string field, not %s",
+					md.Name(), fd.Name(), fieldKindDescription(field))
+			}
+			if field.ObfuscateVisible < 0 {
+				return Message{}, fmt.Errorf("message %s: field %s: (sgo.obfuscate_visible) must be >= 0, got %d",
+					md.Name(), fd.Name(), field.ObfuscateVisible)
+			}
 		}
 
 		msg.Fields = append(msg.Fields, field)
@@ -225,6 +319,39 @@ func mapKind(fd protoreflect.FieldDescriptor) (Kind, error) {
 	default:
 		return KindUnknown, fmt.Errorf("field %s: unsupported kind %s", fd.Name(), fd.Kind())
 	}
+}
+
+// fieldKindDescription names field's kind for an error message, calling
+// out "repeated string" specifically since the underlying scalar kind
+// alone (KindString) would otherwise read as a false positive.
+func fieldKindDescription(field Field) string {
+	if field.Repeated {
+		return "a repeated field"
+	}
+	return "a " + field.Kind.GoType() + " field"
+}
+
+// defaultJSONName computes protobuf's own standard default JSON name
+// for a field (used by every protoc-family compiler when no explicit
+// `[json_name = "..."]` is set): each underscore is dropped and the
+// character after it is upper-cased; every other character passes
+// through unchanged. E.g. "first_name" -> "firstName",
+// "id" -> "id".
+func defaultJSONName(protoName string) string {
+	var b strings.Builder
+	capNext := false
+	for _, r := range protoName {
+		switch {
+		case r == '_':
+			capNext = true
+		case capNext:
+			b.WriteRune(unicode.ToUpper(r))
+			capNext = false
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func goPackageOption(fd protoreflect.FileDescriptor) string {

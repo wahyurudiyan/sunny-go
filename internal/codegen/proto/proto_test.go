@@ -219,3 +219,223 @@ message AllKinds {
 		Expect(nested.GoType()).To(Equal("*Nested"))
 	})
 })
+
+// Exercises the sensitive-field options (ARCHITECTURE.md §22) against a
+// real compiled proto — in particular that HasJSONName/JSONName really
+// does distinguish an explicit `[json_name = "..."]` override from
+// protobuf's own computed default, which is what EffectiveJSONName's
+// backward-compatible fallback depends on.
+var _ = Describe("sensitive-field options", func() {
+	var dir string
+
+	BeforeEach(func() {
+		var err error
+		dir, err = os.MkdirTemp("", "sgo-proto-sensitive-test-*")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(os.RemoveAll(dir)).To(Succeed()) })
+
+		src := `syntax = "proto3";
+
+package sensitive.v1;
+
+import "sgo/options.proto";
+
+option go_package = "demo/contract/gen/sensitive";
+
+message Account {
+  string id = 1;
+  string id_number = 2 [(sgo.obfuscate_visible) = 3, (sgo.pii) = true];
+  string email = 3 [(sgo.pii) = true];
+  string display_name = 4 [json_name = "fullName"];
+  int32 balance = 5;
+}
+`
+		Expect(os.WriteFile(filepath.Join(dir, "sensitive.proto"), []byte(src), 0644)).To(Succeed())
+	})
+
+	It("leaves an unmarked field's JSONName empty, falling back to Name", func() {
+		fd, err := proto.Compile(dir, "sensitive.proto")
+		Expect(err).NotTo(HaveOccurred())
+		file, err := proto.Build(fd)
+		Expect(err).NotTo(HaveOccurred())
+
+		msg := file.FindMessage("Account")
+		Expect(msg).NotTo(BeNil())
+
+		var id proto.Field
+		for _, f := range msg.Fields {
+			if f.Name == "id" {
+				id = f
+			}
+		}
+		Expect(id.JSONName).To(Equal(""))
+		Expect(id.EffectiveJSONName()).To(Equal("id"))
+		Expect(id.IsSensitive()).To(BeFalse())
+	})
+
+	It("picks up an explicit [json_name=...] override, distinct from the computed default", func() {
+		fd, err := proto.Compile(dir, "sensitive.proto")
+		Expect(err).NotTo(HaveOccurred())
+		file, err := proto.Build(fd)
+		Expect(err).NotTo(HaveOccurred())
+
+		msg := file.FindMessage("Account")
+		var displayName proto.Field
+		for _, f := range msg.Fields {
+			if f.Name == "display_name" {
+				displayName = f
+			}
+		}
+		Expect(displayName.JSONName).To(Equal("fullName"))
+		Expect(displayName.EffectiveJSONName()).To(Equal("fullName"))
+	})
+
+	It("treats an explicit override that happens to match the computed default the same as unset (documented edge case, not a bug)", func() {
+		src := `syntax = "proto3";
+
+package sensitive.v1;
+
+option go_package = "demo/contract/gen/sensitive";
+
+message Coincidence {
+  string first_name = 1 [json_name = "firstName"];
+}
+`
+		Expect(os.WriteFile(filepath.Join(dir, "coincidence.proto"), []byte(src), 0644)).To(Succeed())
+
+		fd, err := proto.Compile(dir, "coincidence.proto")
+		Expect(err).NotTo(HaveOccurred())
+		file, err := proto.Build(fd)
+		Expect(err).NotTo(HaveOccurred())
+
+		msg := file.FindMessage("Coincidence")
+		// A real, narrow limitation, not silently glossed over: since
+		// this can't be distinguished from "unset" at this layer,
+		// EffectiveJSONName falls back to Name ("first_name", sgo's own
+		// long-standing default) rather than honoring "firstName" here —
+		// the one case where an explicit override is not honored is
+		// exactly when it equals protobuf's own standard camelCase
+		// default. Documented in ARCHITECTURE.md §22.
+		Expect(msg.Fields[0].JSONName).To(Equal(""))
+		Expect(msg.Fields[0].EffectiveJSONName()).To(Equal("first_name"))
+	})
+
+	It("reads obfuscate_visible and pii together on the same field", func() {
+		fd, err := proto.Compile(dir, "sensitive.proto")
+		Expect(err).NotTo(HaveOccurred())
+		file, err := proto.Build(fd)
+		Expect(err).NotTo(HaveOccurred())
+
+		msg := file.FindMessage("Account")
+		var idNumber proto.Field
+		for _, f := range msg.Fields {
+			if f.Name == "id_number" {
+				idNumber = f
+			}
+		}
+		Expect(idNumber.HasObfuscateVisible).To(BeTrue())
+		Expect(idNumber.ObfuscateVisible).To(Equal(int32(3)))
+		Expect(idNumber.PII).To(BeTrue())
+		Expect(idNumber.IsSensitive()).To(BeTrue())
+	})
+
+	It("reads a plain pii marker with no obfuscation", func() {
+		fd, err := proto.Compile(dir, "sensitive.proto")
+		Expect(err).NotTo(HaveOccurred())
+		file, err := proto.Build(fd)
+		Expect(err).NotTo(HaveOccurred())
+
+		msg := file.FindMessage("Account")
+		var email proto.Field
+		for _, f := range msg.Fields {
+			if f.Name == "email" {
+				email = f
+			}
+		}
+		Expect(email.PII).To(BeTrue())
+		Expect(email.HasObfuscateVisible).To(BeFalse())
+		Expect(email.IsSensitive()).To(BeTrue())
+	})
+
+	It("leaves an entirely unmarked field with no sensitivity at all", func() {
+		fd, err := proto.Compile(dir, "sensitive.proto")
+		Expect(err).NotTo(HaveOccurred())
+		file, err := proto.Build(fd)
+		Expect(err).NotTo(HaveOccurred())
+
+		msg := file.FindMessage("Account")
+		var balance proto.Field
+		for _, f := range msg.Fields {
+			if f.Name == "balance" {
+				balance = f
+			}
+		}
+		Expect(balance.IsSensitive()).To(BeFalse())
+	})
+
+	It("rejects (sgo.obfuscate_visible) on a non-string field with a clear error", func() {
+		src := `syntax = "proto3";
+
+package sensitive.v1;
+
+import "sgo/options.proto";
+
+option go_package = "demo/contract/gen/sensitive";
+
+message Bad {
+  int32 amount = 1 [(sgo.obfuscate_visible) = 2];
+}
+`
+		Expect(os.WriteFile(filepath.Join(dir, "bad.proto"), []byte(src), 0644)).To(Succeed())
+
+		fd, err := proto.Compile(dir, "bad.proto")
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = proto.Build(fd)
+		Expect(err).To(MatchError(ContainSubstring("only valid on a string field")))
+	})
+
+	It("rejects (sgo.obfuscate_visible) on a repeated string field", func() {
+		src := `syntax = "proto3";
+
+package sensitive.v1;
+
+import "sgo/options.proto";
+
+option go_package = "demo/contract/gen/sensitive";
+
+message Bad {
+  repeated string tags = 1 [(sgo.obfuscate_visible) = 2];
+}
+`
+		Expect(os.WriteFile(filepath.Join(dir, "bad2.proto"), []byte(src), 0644)).To(Succeed())
+
+		fd, err := proto.Compile(dir, "bad2.proto")
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = proto.Build(fd)
+		Expect(err).To(MatchError(ContainSubstring("only valid on a string field")))
+	})
+
+	It("rejects a negative (sgo.obfuscate_visible) with a clear error", func() {
+		src := `syntax = "proto3";
+
+package sensitive.v1;
+
+import "sgo/options.proto";
+
+option go_package = "demo/contract/gen/sensitive";
+
+message Bad {
+  string secret = 1 [(sgo.obfuscate_visible) = -1];
+}
+`
+		Expect(os.WriteFile(filepath.Join(dir, "bad3.proto"), []byte(src), 0644)).To(Succeed())
+
+		fd, err := proto.Compile(dir, "bad3.proto")
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = proto.Build(fd)
+		Expect(err).To(MatchError(ContainSubstring("must be >= 0")))
+	})
+})

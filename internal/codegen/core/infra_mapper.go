@@ -48,18 +48,27 @@ func GenerateInfraMapper(f *sgoproto.File, p Paths, destDir string) error {
 		}
 	}
 
+	needsMasking := false
+	for _, m := range messages {
+		needsMasking = needsMasking || m.HasObfuscatedFields()
+	}
+
 	data := struct {
 		WireImportPath        string
 		DomainImportPath      string
 		ApplicationImportPath string
+		MaskImportPath        string
 		Messages              []sgoproto.Message
 		RequestDTOs           []sgoproto.Message
+		NeedsMasking          bool
 	}{
 		WireImportPath:        p.WireImportPath(),
 		DomainImportPath:      p.AggregateDomainImportPath(),
 		ApplicationImportPath: p.ApplicationImportPath(),
+		MaskImportPath:        p.MaskImportPath(),
 		Messages:              messages,
 		RequestDTOs:           requestDTOs,
+		NeedsMasking:          needsMasking,
 	}
 
 	path := filepath.Join(destDir, p.Entity+"_mapper_gen.go")

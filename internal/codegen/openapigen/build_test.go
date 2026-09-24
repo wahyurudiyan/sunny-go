@@ -227,4 +227,64 @@ service WidgetService {
 		_, err := openapigen.Build(cfg, dir)
 		Expect(err).To(MatchError(ContainSubstring("is served by both")))
 	})
+
+	// Sensitive-field vendor extensions (ARCHITECTURE.md §22): a field
+	// marked (sgo.pii) and/or (sgo.obfuscate_visible) gets x-sensitive/
+	// x-obfuscate-visible on its schema, and the doc still validates —
+	// vendor extensions are always meta-schema-valid, but this proves it
+	// against the real validator (validate.go), not just assumed.
+	It("adds x-sensitive/x-obfuscate-visible to a marked field's schema, and the field-key honors an explicit json_name", func() {
+		dir := filepath.Join(root, "demo")
+		protoDir := filepath.Join(dir, "contract", "pb")
+		Expect(os.MkdirAll(protoDir, 0755)).To(Succeed())
+
+		Expect(os.WriteFile(filepath.Join(protoDir, "account.proto"), []byte(`syntax = "proto3";
+package account.v1;
+
+import "sgo/options.proto";
+
+option go_package = "demo/contract/gen/account";
+
+message Account {
+  string id = 1;
+  string id_number = 2 [(sgo.obfuscate_visible) = 3, json_name = "governmentId"];
+  string email = 3 [(sgo.pii) = true];
+  string display_name = 4;
+}
+
+service AccountService {
+  rpc GetAccount(Account) returns (Account);
+}
+`), 0644)).To(Succeed())
+
+		cfg := &config.Config{Module: "demo", Services: []string{"account"}}
+
+		doc, err := openapigen.Build(cfg, dir)
+		Expect(err).NotTo(HaveOccurred())
+
+		props := doc.Components.Schemas["Account"].Properties
+
+		Expect(props).To(HaveKey("governmentId"))
+		Expect(props).NotTo(HaveKey("id_number"))
+		idNumber := props["governmentId"]
+		Expect(idNumber.Type).To(Equal("string"))
+		Expect(idNumber.Sensitive).To(BeTrue())
+		Expect(idNumber.ObfuscateVisible).NotTo(BeNil())
+		Expect(*idNumber.ObfuscateVisible).To(Equal(int32(3)))
+
+		email := props["email"]
+		Expect(email.Sensitive).To(BeTrue())
+		Expect(email.ObfuscateVisible).To(BeNil())
+
+		displayName := props["display_name"]
+		Expect(displayName.Sensitive).To(BeFalse())
+		Expect(displayName.ObfuscateVisible).To(BeNil())
+
+		id := props["id"]
+		Expect(id.Sensitive).To(BeFalse())
+
+		data, err := openapigen.Encode(doc, config.OpenAPIVersion30, config.OpenAPIFormatJSON)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(openapigen.Validate(data)).To(Succeed())
+	})
 })

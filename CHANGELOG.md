@@ -5,6 +5,29 @@ All notable changes to `sgo` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-09-24
+
+`sgo update`, described in full in `ARCHITECTURE.md` §23 and `PLAN.md`
+Phase 19.
+
+### Added
+
+- **`sgo update [--check] [--version vX.Y.Z]`** — updates the `sgo`
+  binary itself via `go install github.com/wahyurudiyan/sunny-go/cmd/sgo@<version>`,
+  the same command README's own Install section already documents.
+  With no flags: resolves the latest published version from the Go
+  module proxy, compares it against the running binary, and either
+  reports "already up to date" or reinstalls. `--check` reports without
+  installing. `--version` installs a specific version (including a
+  downgrade), skipping the up-to-date check.
+- After a successful install, warns (without failing) when the
+  directory `go install` wrote to differs from the directory the
+  currently running `sgo` lives in — a copy, a symlink, or a second Go
+  environment that would otherwise leave the update silently unused.
+- `internal/selfupdate` — the version-resolution (`go list -m
+  -versions`), install, and GOBIN-mismatch-detection logic behind the
+  new command, as its own testable package.
+
 ## [0.2.0] - 2026-09-22
 
 Loading indicators, and `sgo run [--debug]` with a live config

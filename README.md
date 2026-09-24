@@ -425,6 +425,7 @@ beyond loopback.
 | `sgo list services` | Show each service's generation status |
 | `sgo list endpoints [service]` | Print every HTTP route the project currently serves |
 | `sgo ui` | Start the localhost web UI |
+| `sgo update [--check] [--version]` | Update sgo itself via `go install` |
 
 Full flags, defaults, and behavior for each command:
 [`docs/CLI.md`](docs/CLI.md).

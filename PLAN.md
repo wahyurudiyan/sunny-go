@@ -1275,7 +1275,7 @@ its generated JSON key in sgo's own HTTP serialization/binding without
 changing the default key for any other field. Every existing generated-
 project e2e spec still passes with no proto changes.
 
-## Phase 19 — `sgo update`: self-updating the CLI **(planned)**
+## Phase 19 — `sgo update`: self-updating the CLI **(done)**
 
 Full design in ARCHITECTURE.md §23. `sgo`'s only install path today is
 `go install github.com/wahyurudiyan/sunny-go/cmd/sgo@latest` (README) —
@@ -1297,47 +1297,75 @@ tag, and every version after it). **Ship `--check` and `--version` in
 this same phase**, not deferred — cheap once version resolution exists
 for the bare command.
 
-- [ ] `internal/commands/update.go` — new `sgo update` command wired into
+- [x] `internal/commands/update.go` — new `sgo update` command wired into
       `rootCmd`, following the existing command-file-per-subcommand
       layout (`init.go`, `generate.go`, `list.go`, `openapi.go`, `ui.go`).
-- [ ] Version resolution: `go list -m -versions -json
-      github.com/wahyurudiyan/sunny-go` via `os/exec`, parsed for the
-      highest semver tag. **v1 constraint, stated rather than silently
-      wrong:** an untagged repo (or a proxy/network failure) is reported
-      as a clear "no tagged releases found" / error, never guessed at or
-      silently treated as "already up to date."
-- [ ] Bare `sgo update`: resolves latest, compares against the running
+      Its version-resolution/install/GOBIN logic lives in a new
+      `internal/selfupdate` package (the same "logic in a package, thin
+      command wrapper" split `openapigen`/`webui` already use), not
+      inline in the command file — the whole point being to keep it
+      testable without needing a successful `go install` to exercise the
+      comparison/mismatch logic.
+- [x] Version resolution: `internal/selfupdate.Versions`/`Latest` run
+      `go list -m -versions -json <module>` via `os/exec`, parsed with
+      `golang.org/x/mod/semver` (already an indirect dependency,
+      promoted to direct — the same semver package `go` itself uses
+      internally, not a hand-rolled comparison). **v1 constraint, stated
+      rather than silently wrong:** an untagged repo (or a proxy/network
+      failure) is reported as a clear "no tagged releases found" / error,
+      never guessed at or silently treated as "already up to date" —
+      verified for real against sgo's own still-untagged module, not
+      simulated: `go list -m -versions -json` on it comes back with no
+      `Versions` field at all (confirmed directly, both from inside and
+      outside the module's own checkout), which `Versions()` treats as
+      "zero, no error," not a failure.
+- [x] Bare `sgo update`: resolves latest, compares against the running
       binary's `commands.Version`, prints "already up to date" and exits
       cleanly if equal, otherwise prints "updating vX.Y.Z → vA.B.C" and
       runs `go install github.com/wahyurudiyan/sunny-go/cmd/sgo@<latest>`
       via `os/exec` with output streamed through (build errors visible,
       not swallowed).
-- [ ] `--check`: resolves and prints the latest version (and whether it
+- [x] `--check`: resolves and prints the latest version (and whether it
       differs from the running one) without installing anything — same
       resolution codepath, skips the `go install` step.
-- [ ] `--version vX.Y.Z`: installs that exact version instead of latest,
+- [x] `--version vX.Y.Z`: installs that exact version instead of latest,
       skipping the "already up to date" short-circuit (an explicit
       version always runs `go install`, including a downgrade) — the
       printed "vX.Y.Z → vA.B.C" line always makes the direction plain
-      before it runs, since there's no confirmation prompt.
-- [ ] **GOBIN mismatch warning.** After a successful `go install`,
-      compare `go env GOBIN` (falling back to `$GOPATH/bin`, then
-      `$HOME/go/bin`) against `os.Executable()`'s path (the binary
-      currently running `sgo update`). Print an explicit warning naming
+      before it runs, since there's no confirmation prompt. Accepts a
+      bare `0.2.0` or a `v`-prefixed `v0.2.0` (`NormalizeVersion`), and
+      rejects anything that isn't syntactically valid semver before
+      attempting any install.
+- [x] **GOBIN mismatch warning.** `selfupdate.BinMismatch` compares
+      `go env GOBIN` (falling back to `go env GOPATH`'s `bin`
+      subdirectory) against the resolved (symlinks-followed) path of the
+      currently running binary (`os.Executable()`). `sgo update` calls it
+      after a successful install and prints an explicit warning naming
       both paths when they differ, rather than reporting a bare
       "updated" that leaves the user silently running the old binary on
-      their next invocation.
-- [ ] Ginkgo specs: version-resolution parsing (a real `go list -m
-      -versions -json` output fixture, plus the untagged/error-path
-      case); the compare-and-skip logic (equal versions short-circuit,
-      no `go install` call); `--check` never invoking `go install`;
-      `--version` always invoking it, downgrade included; the GOBIN-
-      mismatch warning firing when `os.Executable()` and the resolved
-      `GOBIN` path differ, and staying silent when they match. The
-      `go install` step itself is exercised against a real throwaway
-      `GOBIN` in a temp dir (same "verify against real tools, not
-      mocked" standard as the rest of this repo's e2e specs), not
-      stubbed out.
+      their next invocation; the comparison itself is its own function
+      (not inlined into the command), so it's testable independent of
+      whether an install actually succeeded.
+- [x] Ginkgo specs: `internal/selfupdate` — `Versions`/`Latest` against a
+      real tagged module (`github.com/spf13/cobra`) and against sgo's own
+      real untagged module (no versions, no error); an unresolvable
+      module path erroring; `NormalizeVersion`'s prefix/reject cases;
+      `Install` running a real `go install` of a real, already-cached
+      tagged module (`golang.org/x/tools/cmd/stringer`) into an isolated
+      temp `GOBIN` and a real install failure (a nonexistent version)
+      surfacing its error rather than swallowing it; `BinDir` reading a
+      set `GOBIN`; `BinMismatch` both matching and differing, plus a
+      smoke check that resolving its own running executable doesn't
+      error. `internal/commands` (subprocess e2e, driving the real
+      compiled binary): the bare command and `--check` both reporting "no
+      tagged releases" against the real untagged module; `--check
+      --version` reporting the requested version without installing; an
+      invalid `--version` rejected before anything runs; `--version`
+      against the real (untagged) module surfacing the real `go install`
+      failure rather than hanging or swallowing it. The success path of
+      an actual reinstall is covered at the `selfupdate` package level
+      against a real tagged module, since sgo's own module has no tag to
+      install yet — the same limitation stated throughout this phase.
 
 **Exit criteria:** `sgo update` against a real tagged version reports
 "already up to date" and installs nothing when the running binary
@@ -1348,7 +1376,18 @@ afterward. `sgo update --check` never modifies anything. `sgo update
 --version vX.Y.Z` installs exactly that version, downgrade included. A
 GOBIN/running-binary path mismatch produces a visible warning naming
 both paths. Against a repo with no tags, `sgo update` reports plainly
-that there's nothing to compare against rather than guessing.
+that there's nothing to compare against rather than guessing. All met —
+the "already up to date"/reinstall comparison, `--check`, `--version`
+(including its input validation), and the GOBIN-mismatch warning are
+each proven against real `go` tooling (`internal/selfupdate`'s suite),
+and the command surface itself (flag parsing, error messages, exit
+codes) is proven by driving the real compiled binary as a subprocess
+(`internal/commands`' e2e suite) — full repo suite green, `gofmt`/`go
+vet` clean. The one piece genuinely untestable right now — an actual
+successful reinstall of sgo's own module via its own `sgo update` — is
+covered by installing a different, real, already-tagged module through
+the same `Install` function instead, since sgo's own module still has
+no published tag; revisit once `v0.1.0` (or later) actually ships.
 
 ## Non-goals (for now)
 

@@ -331,6 +331,41 @@ so the viewer works with no network access at all. See ARCHITECTURE.md
 once it's generated a service, the same "next steps" pattern `sgo init`
 already uses for `sgo generate proto`.
 
+## `sgo update` ✅
+
+```
+sgo update [--check] [--version vX.Y.Z]
+```
+
+Updates the `sgo` binary itself — a wrapper around
+`go install github.com/wahyurudiyan/sunny-go/cmd/sgo@<version>`, the
+same command the [Install](../README.md#-install) section already tells
+you to run by hand. Requires the Go toolchain on `PATH`, same as
+installing `sgo` in the first place did; not project-scoped, so it works
+from anywhere, not just inside a generated project.
+
+With no flags: resolves the latest published version from the Go module
+proxy (`go list -m -versions`), compares it against this binary's own
+version, and either prints "Already up to date" and does nothing, or
+prints the version transition and reinstalls.
+
+`--check` reports the same comparison without installing anything.
+`--version vX.Y.Z` installs that exact version instead of latest
+(including a downgrade), skipping the up-to-date check — the printed
+version-transition line is the only confirmation, there's no interactive
+prompt.
+
+After a successful install, warns (without failing) if the directory
+`go install` just wrote to differs from the directory this currently
+running `sgo` lives in — a sign it's a copy, a symlink, or a second Go
+environment, so the freshly installed binary isn't actually the one
+still on `PATH`.
+
+Only reports something meaningful once `sgo` itself has real tagged
+releases published on the module proxy — against an untagged module (or
+a proxy/network failure), it says so plainly rather than guessing at a
+version. See ARCHITECTURE.md §23.
+
 ## Removed/renamed from the current CLI
 
 | Current (`sunny`) | New (`sgo`) | Why |

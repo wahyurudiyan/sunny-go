@@ -111,6 +111,14 @@ func (p Paths) EventImportPath() string {
 	return path.Join(p.Module, "internal/domain/event")
 }
 
+// MaskImportPath is the shared internal/domain/mask package
+// (ARCHITECTURE.md §22) every entity's masking-aware MarshalJSON/
+// LogValue, and the infra mapper's gRPC masking, call into — one
+// Obfuscate helper, not one per entity.
+func (p Paths) MaskImportPath() string {
+	return path.Join(p.Module, "internal/domain/mask")
+}
+
 // ApplicationImportPath is internal/application/<entity> — the CQRS
 // command/query DTOs and application service (ARCHITECTURE.md §17).
 func (p Paths) ApplicationImportPath() string {

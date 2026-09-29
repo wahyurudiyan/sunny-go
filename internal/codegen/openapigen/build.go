@@ -90,7 +90,12 @@ func addMessages(doc *Document, file *sgoproto.File, entity string) error {
 func messageSchema(m sgoproto.Message) *Schema {
 	props := make(map[string]*Schema, len(m.Fields))
 	for _, f := range m.Fields {
-		props[f.Name] = fieldToSchema(f)
+		// EffectiveJSONName, not the raw proto field name, since this
+		// is documenting the actual wire JSON key a client sends/
+		// receives — an explicit [json_name=...] override changes that
+		// key (ARCHITECTURE.md §22), and the doc has to match or it's
+		// documenting a contract the API doesn't actually serve.
+		props[f.EffectiveJSONName()] = fieldToSchema(f)
 	}
 
 	return &Schema{Type: "object", Properties: props}
@@ -105,8 +110,30 @@ func fieldToSchema(f sgoproto.Field) *Schema {
 	}
 
 	if f.Repeated {
-		return &Schema{Type: "array", Items: s}
+		s = &Schema{Type: "array", Items: s}
 	}
+
+	// x-sensitive/x-obfuscate-visible: documentation-only vendor
+	// extensions (ARCHITECTURE.md §22) — they don't gate what a client
+	// can request or a server will return, they just flag the field for
+	// whoever's reading the doc. Never added to a bare $ref schema
+	// (s.Ref != ""): OpenAPI 3.0's meta-schema rejects sibling keys next
+	// to $ref (3.1 would allow it, but this Schema type serves both —
+	// see the package doc comment on Document), and obfuscate_visible is
+	// v1-restricted to string fields anyway (never reaches a $ref here),
+	// so only a message field marked (sgo.pii) alone could ever hit
+	// this. A repeated message field is unaffected — the array wrapper
+	// built above has no $ref of its own to conflict with.
+	if s.Ref == "" {
+		if f.PII || f.HasObfuscateVisible {
+			s.Sensitive = true
+		}
+		if f.HasObfuscateVisible {
+			visible := f.ObfuscateVisible
+			s.ObfuscateVisible = &visible
+		}
+	}
+
 	return s
 }
 

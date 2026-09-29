@@ -1171,7 +1171,7 @@ path/tree in the new README was captured from a real generated project,
 and the two docs-drift bugs found while cross-checking were fixed, not
 just noted.
 
-## Phase 18 — Sensitive-field protection: obfuscation, PII marking, `json_name` **(planned)**
+## Phase 18 — Sensitive-field protection: obfuscation, PII marking, `json_name` **(done)**
 
 Full design in ARCHITECTURE.md §22, including the two verified findings
 that shape it: HTTP responses serialize the same `*domain.Entity` pointer
@@ -1198,69 +1198,110 @@ and `(sgo.obfuscate_visible)` compose on the same field** — renaming a
 field's wire key and masking its value are orthogonal and meant to be
 usable together.
 
-- [ ] `sgo/options.proto` gains its first `extend google.protobuf.FieldOptions`
+- [x] `sgo/options.proto` gains its first `extend google.protobuf.FieldOptions`
       block: `int32 obfuscate_visible = 50001;` and `bool pii = 50002;` —
       one more vendored file accumulating fields across phases (12/15/16
-      already), not a new vendored file.
-- [ ] `internal/codegen/proto`'s `Field` IR gains `JSONName string`,
-      `ObfuscateVisible int32`, `HasObfuscate bool`. `JSONName` is read
-      from the raw `descriptorpb.FieldDescriptorProto.JsonName`, **only
-      when the proto source explicitly sets `[json_name=...]`** — never
-      from protoreflect's `.JSONName()` convenience accessor, which
-      always returns a value (protobuf's own computed default) and would
-      silently rename every existing field's JSON key the moment this
-      ships if used instead. `.JSONName` on the IR field defaults to
-      `.Name` (today's behavior) when no override is set.
-- [ ] `aggregate_gen.go.tmpl` and `cqrs_gen.go.tmpl` switch their
-      `` `json:"{{.Name}}"` `` tag to `` `json:"{{.JSONName}}"` `` —
-      byte-identical output for every field without an explicit
-      `[json_name=...]`, verified by a spec asserting an unmodified
-      proto regenerates unchanged.
-- [ ] Generated `obfuscate(value string, visible int) string` helper,
-      embedded once per generated project (not part of sgo's own
-      binary): passes through the first `visible` characters, replaces
-      the rest with a fixed-length mask regardless of the real remaining
-      length.
-- [ ] **HTTP/response masking, non-destructive.** A domain struct
+      already), not a new vendored file. `pkg/sgoproto/options.pb.go`
+      regenerated for real, through the repo's own real
+      compile-then-protoc-gen-go mechanism (the same one `wiregen`
+      already uses for a generated project's own contract/gen) — not
+      hand-edited.
+- [x] `internal/codegen/proto`'s `Field` IR gains `JSONName string`,
+      `PII bool`, `ObfuscateVisible int32`, `HasObfuscateVisible bool`,
+      plus `EffectiveJSONName()` (falls back to `Name`), `IsSensitive()`,
+      and `Message.HasObfuscatedFields()`. **Real finding, not
+      assumed:** `protoreflect.FieldDescriptor.HasJSONName()` does not
+      actually distinguish an explicit `[json_name=...]` from protobuf's
+      own computed default with protocompile's linked descriptors —
+      every field reported `true`, confirmed directly with a spec before
+      relying on it. `JSONName` detection instead compares
+      `fd.JSONName()` against a from-scratch implementation of
+      protobuf's own standard default-computation algorithm
+      (`defaultJSONName`), which has one honest, narrow, documented
+      consequence: an override that happens to equal the computed
+      default is indistinguishable from unset. `.EffectiveJSONName()`
+      falls back to `.Name` (today's behavior) when no override is
+      detected.
+- [x] `aggregate_gen.go.tmpl` and `cqrs_gen.go.tmpl` switch their
+      `` `json:"{{.Name}}"` `` tag to `` `json:"{{.EffectiveJSONName}}"` ``
+      — byte-identical output for every field without an explicit
+      `[json_name=...]`, verified by the existing "builds an IR whose
+      User message matches the proto fields" spec (proto/proto_test.go)
+      continuing to pass unmodified.
+- [x] `internal/domain/mask` (new `core.GenerateMaskKernel` +
+      `mask_gen.go.tmpl`) holds the `Obfuscate(value string, visible
+      int) string` helper, generated once per project — wired into
+      `codegen.GenerateCode` next to `GenerateEventKernel`, the same
+      "one shared package, not one per entity" shape
+      `internal/domain/event` already uses, not embedded in sgo's own
+      binary.
+- [x] **HTTP/response masking, non-destructive.** A domain struct
       (aggregate/value object/child entity — not request/command/query
       DTOs, which are never serialized as a response) with at least one
       `obfuscate_visible` field gets a generated `MarshalJSON() ([]byte,
       error)` using a type-alias-embedded-in-an-anonymous-struct shadow
       pattern, so the real struct is never mutated by serializing it.
-      Proven by a spec that writes a value, serializes an HTTP response,
-      then reads the same record straight from the repository and
-      asserts it's still unmasked.
-- [ ] **gRPC masking.** `grpc_server_gen.go.tmpl`'s
-      `mapper.<Entity>FromDomain` gains a masked assignment per
-      obfuscated field — safe without a shadow struct, since that
-      function already builds a brand-new wire struct every call.
-      Proven by a bufconn e2e spec asserting the client receives the
-      masked value while a direct repository read shows the real one.
-- [ ] **`LogValue() slog.Value`** generated for any message with at
-      least one `obfuscate_visible` field: every field emitted via the
-      matching `slog.<Type>` constructor, obfuscated fields passed
-      through `obfuscate()` first. A `pii`-only field (no obfuscation)
-      logs as-is, matching the decision that the plain marker carries no
-      masking behavior. Proven by a spec capturing `LogValue()`'s output
-      through a real `slog.TextHandler`/buffer and asserting the real
-      value never appears in the log line for an obfuscated field.
-- [ ] **OpenAPI.** `openapigen`'s `Schema` gains `x-sensitive: true` (and
+      Proven by a real Gin `httptest` e2e spec (`gin_e2e_test.go`) that
+      creates a user over real HTTP, asserts the response shows
+      `"123*****"`, then reads the same record directly from the
+      in-memory repository (bypassing HTTP/JSON entirely) and asserts
+      it's still `"123456789"`.
+- [x] **gRPC masking.** `infra_mapper_gen.go.tmpl`'s
+      `<Entity>FromDomain` gains a masked assignment per obfuscated
+      field — safe without a shadow struct, since that function already
+      builds a brand-new wire struct every call. Proven by a real
+      `bufconn` e2e spec (`grpc_e2e_test.go`) with a generated client and
+      server: the client receives the masked email over a real gRPC
+      call, while a direct `repo.Get` call in the same process shows the
+      real one.
+- [x] **`LogValue() slog.Value`** generated for any message with at
+      least one `obfuscate_visible` field: every field emitted via
+      `slog.String` (obfuscated, through `mask.Obfuscate`) or
+      `slog.Any` (everything else — simpler and just as correct as a
+      per-Kind constructor switch, since `slog.Any` handles any Go type).
+      A `pii`-only field (no obfuscation) logs as-is, matching the
+      decision that the plain marker carries no masking behavior.
+      **Extended beyond the domain-struct set to CQRS command/query
+      DTOs too** (`cqrs_gen.go.tmpl`, value receiver so both the value
+      and pointer forms a DTO is actually used in satisfy
+      `slog.LogValuer`) — request bodies get logged in practice just as
+      often as responses do, and Non-goals doesn't exclude it; only
+      `MarshalJSON` stays domain-struct-only, since DTOs are genuinely
+      never serialized as a response. Proven by two real `slog.TextHandler`
+      capture specs — one for the domain struct, one for a DTO logged
+      both by value and by pointer — asserting the real value never
+      appears in the log line.
+- [x] **OpenAPI.** `openapigen`'s `Schema` gains `x-sensitive: true` (and
       `x-obfuscate-visible: N` when set) on a property backed by a
       `pii`- or `obfuscate_visible`-marked field — vendor extensions,
-      always valid against the vendored meta-schemas (Phase 8), so the
-      document still validates.
-- [ ] **v1 constraints, stated rather than silently mishandled:**
-      `obfuscate_visible` only on a `string`-kind scalar field (a
-      mismatched type fails generation with a clear error); value must
-      be `>= 0`.
-- [ ] Ginkgo specs: option parsing (marked fields produce the expected
-      IR); the non-destructive-mutation regression spec (the most
+      always valid against the vendored meta-schemas (Phase 8), proven
+      by building a real document and running it through the real
+      validator (not just asserting the field is set). **Also fixed
+      along the way:** `messageSchema`'s property keys were still the
+      raw proto field name, not `EffectiveJSONName()` — a real,
+      previously-latent gap this phase's own `json_name` work surfaced,
+      since the OpenAPI doc has to document the actual wire JSON key or
+      it's documenting a contract the API doesn't serve. **Also found
+      and guarded:** the vendor extensions are never added to a bare
+      `$ref` schema (a message-typed field marked `pii` alone could
+      otherwise reach one), since OpenAPI 3.0's meta-schema rejects
+      sibling keys next to `$ref`.
+- [x] **v1 constraints, stated rather than silently mishandled:**
+      `obfuscate_visible` only on a `string`-kind scalar field, and never
+      repeated (a mismatched type or repeated field fails generation with
+      a clear error naming which); value must be `>= 0`. Enforced at IR
+      build time (`proto.Build`), not deferred to a template-rendering
+      failure.
+- [x] Ginkgo specs: option parsing against real compiled protos
+      (`proto/proto_test.go`, including the `HasJSONName()` finding, the
+      override-equals-default edge case, and both v1-constraint error
+      paths); the non-destructive-mutation regression spec (the most
       important one — guards exactly the aliasing risk this design is
-      built around); the real HTTP e2e spec; the real gRPC e2e spec; the
-      OpenAPI vendor-extension spec; the `slog` redaction spec; the
-      type-mismatch and negative-value error-path specs; a spec
-      confirming a field with no `[json_name=...]`/no `obfuscate_visible`
-      regenerates byte-identical output to today.
+      built around) for both the aggregate and a value object; the real
+      HTTP e2e spec; the real gRPC e2e spec; the OpenAPI vendor-extension
+      + meta-schema-validation spec; the `slog` redaction specs for both
+      the domain struct and a CQRS DTO. Full repo suite green,
+      `gofmt`/`go vet` clean.
 
 **Exit criteria:** a field marked `(sgo.obfuscate_visible) = N` shows a
 fixed-length-masked value (first N real characters, then a fixed mask)
@@ -1273,7 +1314,10 @@ true` alone is flagged in the generated OpenAPI doc and otherwise behaves
 exactly as before. An explicit `[json_name="..."]` on a field overrides
 its generated JSON key in sgo's own HTTP serialization/binding without
 changing the default key for any other field. Every existing generated-
-project e2e spec still passes with no proto changes.
+project e2e spec still passes with no proto changes. All met — see the
+Ginkgo specs above; the two real findings during the build (`HasJSONName`'s
+actual behavior, the OpenAPI property-key gap) are documented in
+ARCHITECTURE.md §22's "As implemented" rather than silently absorbed.
 
 ## Phase 19 — `sgo update`: self-updating the CLI **(planned)**
 

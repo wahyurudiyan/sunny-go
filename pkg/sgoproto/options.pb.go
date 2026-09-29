@@ -86,6 +86,22 @@ var file_sgo_options_proto_extTypes = []protoimpl.ExtensionInfo{
 		Tag:           "bytes,50001,opt,name=base_path",
 		Filename:      "sgo/options.proto",
 	},
+	{
+		ExtendedType:  (*descriptorpb.FieldOptions)(nil),
+		ExtensionType: (*int32)(nil),
+		Field:         50001,
+		Name:          "sgo.obfuscate_visible",
+		Tag:           "varint,50001,opt,name=obfuscate_visible",
+		Filename:      "sgo/options.proto",
+	},
+	{
+		ExtendedType:  (*descriptorpb.FieldOptions)(nil),
+		ExtensionType: (*bool)(nil),
+		Field:         50002,
+		Name:          "sgo.pii",
+		Tag:           "varint,50002,opt,name=pii",
+		Filename:      "sgo/options.proto",
+	},
 }
 
 // Extension fields to descriptorpb.MessageOptions.
@@ -116,6 +132,14 @@ var (
 	E_BasePath = &file_sgo_options_proto_extTypes[7]
 )
 
+// Extension fields to descriptorpb.FieldOptions.
+var (
+	// optional int32 obfuscate_visible = 50001;
+	E_ObfuscateVisible = &file_sgo_options_proto_extTypes[8]
+	// optional bool pii = 50002;
+	E_Pii = &file_sgo_options_proto_extTypes[9]
+)
+
 var File_sgo_options_proto protoreflect.FileDescriptor
 
 const file_sgo_options_proto_rawDesc = "" +
@@ -129,27 +153,32 @@ const file_sgo_options_proto_rawDesc = "" +
 	"\x10repository_query\x12\x1e.google.protobuf.MethodOptions\x18ӆ\x03 \x01(\bR\x0frepositoryQuery:?\n" +
 	"\n" +
 	"hide_route\x12\x1e.google.protobuf.MethodOptions\x18Ԇ\x03 \x01(\bR\thideRoute:>\n" +
-	"\tbase_path\x12\x1f.google.protobuf.ServiceOptions\x18ц\x03 \x01(\tR\bbasePathB/Z-github.com/wahyurudiyan/sunny-go/pkg/sgoprotob\x06proto3"
+	"\tbase_path\x12\x1f.google.protobuf.ServiceOptions\x18ц\x03 \x01(\tR\bbasePath:L\n" +
+	"\x11obfuscate_visible\x12\x1d.google.protobuf.FieldOptions\x18ц\x03 \x01(\x05R\x10obfuscateVisible:1\n" +
+	"\x03pii\x12\x1d.google.protobuf.FieldOptions\x18҆\x03 \x01(\bR\x03piiB/Z-github.com/wahyurudiyan/sunny-go/pkg/sgoprotob\x06proto3"
 
 var file_sgo_options_proto_goTypes = []any{
 	(*descriptorpb.MessageOptions)(nil), // 0: google.protobuf.MessageOptions
 	(*descriptorpb.MethodOptions)(nil),  // 1: google.protobuf.MethodOptions
 	(*descriptorpb.ServiceOptions)(nil), // 2: google.protobuf.ServiceOptions
+	(*descriptorpb.FieldOptions)(nil),   // 3: google.protobuf.FieldOptions
 }
 var file_sgo_options_proto_depIdxs = []int32{
-	0, // 0: sgo.aggregate_root:extendee -> google.protobuf.MessageOptions
-	0, // 1: sgo.value_object:extendee -> google.protobuf.MessageOptions
-	0, // 2: sgo.domain_event:extendee -> google.protobuf.MessageOptions
-	1, // 3: sgo.command:extendee -> google.protobuf.MethodOptions
-	1, // 4: sgo.query:extendee -> google.protobuf.MethodOptions
-	1, // 5: sgo.repository_query:extendee -> google.protobuf.MethodOptions
-	1, // 6: sgo.hide_route:extendee -> google.protobuf.MethodOptions
-	2, // 7: sgo.base_path:extendee -> google.protobuf.ServiceOptions
-	8, // [8:8] is the sub-list for method output_type
-	8, // [8:8] is the sub-list for method input_type
-	8, // [8:8] is the sub-list for extension type_name
-	0, // [0:8] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0,  // 0: sgo.aggregate_root:extendee -> google.protobuf.MessageOptions
+	0,  // 1: sgo.value_object:extendee -> google.protobuf.MessageOptions
+	0,  // 2: sgo.domain_event:extendee -> google.protobuf.MessageOptions
+	1,  // 3: sgo.command:extendee -> google.protobuf.MethodOptions
+	1,  // 4: sgo.query:extendee -> google.protobuf.MethodOptions
+	1,  // 5: sgo.repository_query:extendee -> google.protobuf.MethodOptions
+	1,  // 6: sgo.hide_route:extendee -> google.protobuf.MethodOptions
+	2,  // 7: sgo.base_path:extendee -> google.protobuf.ServiceOptions
+	3,  // 8: sgo.obfuscate_visible:extendee -> google.protobuf.FieldOptions
+	3,  // 9: sgo.pii:extendee -> google.protobuf.FieldOptions
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	0,  // [0:10] is the sub-list for extension extendee
+	0,  // [0:0] is the sub-list for field type_name
 }
 
 func init() { file_sgo_options_proto_init() }
@@ -164,7 +193,7 @@ func file_sgo_options_proto_init() {
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sgo_options_proto_rawDesc), len(file_sgo_options_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   0,
-			NumExtensions: 8,
+			NumExtensions: 10,
 			NumServices:   0,
 		},
 		GoTypes:           file_sgo_options_proto_goTypes,

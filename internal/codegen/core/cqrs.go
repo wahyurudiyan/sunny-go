@@ -77,22 +77,40 @@ func GenerateCommandsAndQueries(f *sgoproto.File, fd protoreflect.FileDescriptor
 	}
 
 	if len(commands) > 0 {
-		if err := writeGoFile("templates/cqrs_gen.go.tmpl", struct {
-			Package  string
-			Messages []sgoproto.Message
-		}{Package: p.Entity, Messages: commands}, filepath.Join(destDir, "command_gen.go")); err != nil {
+		if err := writeGoFile("templates/cqrs_gen.go.tmpl", cqrsTemplateData(p, commands), filepath.Join(destDir, "command_gen.go")); err != nil {
 			return err
 		}
 	}
 
 	if len(queries) > 0 {
-		if err := writeGoFile("templates/cqrs_gen.go.tmpl", struct {
-			Package  string
-			Messages []sgoproto.Message
-		}{Package: p.Entity, Messages: queries}, filepath.Join(destDir, "query_gen.go")); err != nil {
+		if err := writeGoFile("templates/cqrs_gen.go.tmpl", cqrsTemplateData(p, queries), filepath.Join(destDir, "query_gen.go")); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func cqrsTemplateData(p Paths, messages []sgoproto.Message) struct {
+	Package        string
+	Messages       []sgoproto.Message
+	MaskImportPath string
+	NeedsMasking   bool
+} {
+	needsMasking := false
+	for _, m := range messages {
+		needsMasking = needsMasking || m.HasObfuscatedFields()
+	}
+
+	return struct {
+		Package        string
+		Messages       []sgoproto.Message
+		MaskImportPath string
+		NeedsMasking   bool
+	}{
+		Package:        p.Entity,
+		Messages:       messages,
+		MaskImportPath: p.MaskImportPath(),
+		NeedsMasking:   needsMasking,
+	}
 }

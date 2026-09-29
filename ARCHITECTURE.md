@@ -1054,7 +1054,7 @@ through a real `sgo init` → proto → `sgo generate code` → `go build`/
 `go run` project, and a hand-written owned-stub body survives a second
 `generate code` run the same way `service.go` already does.
 
-## 22. Sensitive-field protection: obfuscation, PII marking, and `json_name` **(planned, Phase 18)**
+## 22. Sensitive-field protection: obfuscation, PII marking, and `json_name` **(done, Phase 18)**
 
 Verified against the real generated templates before writing any of this
 design, not assumed: `internal/codegen/httpgen/templates/gin_routes.go.tmpl`
@@ -1231,6 +1231,62 @@ schema's `type`/`required`/etc.
   hash-based masking. The one mechanism the locked decisions above scope
   to. Revisit if a real need for a different strategy shows up (PLAN.md
   Non-goals).
+
+**As implemented, with two things found during the build that reshaped
+it, not glossed over:**
+
+- **`protoreflect.FieldDescriptor.HasJSONName()` doesn't actually
+  distinguish an explicit `[json_name=...]` from protobuf's own computed
+  default, with protocompile's linked descriptors** — verified directly
+  (a spec asserting it), contradicting its own doc comment. Every field
+  reported `true`. `JSONName` detection instead compares `fd.JSONName()`
+  against protobuf's own standard camelCase-default algorithm
+  (`defaultJSONName`, ir.go) and only treats it as an override when they
+  differ — which has one honest, narrow consequence: an explicit
+  override that happens to equal what the default would have been
+  anyway (`[json_name = "firstName"]` on `first_name`) is indistinguishable
+  from unset, and falls back to `Name` (`"first_name"`) rather than being
+  honored. Documented on `Field.JSONName` itself and covered by a spec
+  pinning down the exact (surprising) output, not just the detection
+  logic.
+- **`LogValue()` generation was extended to CQRS command/query DTOs too**
+  (`cqrs_gen.go.tmpl`), not only the domain-struct set (aggregate/value
+  object/child entity) the response-masking section above is scoped to.
+  Request bodies get logged in practice (access logs, debug logs) just
+  as often as responses do, and the mechanism is identical — a value
+  receiver (not pointer, since a DTO is used both ways: by value when
+  bound from JSON, by pointer when passed to a service method) redacting
+  the same way. No `MarshalJSON` for DTOs, since they're genuinely never
+  serialized as a response — that exclusion holds exactly as designed.
+- **`internal/domain/mask`** (not `internal/domain/<entity>/mask`) holds
+  the one `Obfuscate` helper every entity's generated code calls into —
+  generated once per project by a new `core.GenerateMaskKernel`, wired
+  into `codegen.GenerateCode` right next to `GenerateEventKernel`, the
+  same "one shared package, not one per entity" shape `internal/domain/
+  event` already uses.
+- **OpenAPI's vendor extensions are never added to a bare `$ref` schema**
+  — a message-typed field marked `(sgo.pii)` alone (obfuscate_visible is
+  already restricted to `string` fields, so it can't reach this case)
+  would otherwise put `x-sensitive` as a sibling of `$ref`, which
+  OpenAPI 3.0's meta-schema rejects (3.1 allows it, but `Schema` serves
+  both versions — §13's doc comment). A repeated message field is
+  unaffected, since the array wrapper `fieldToSchema` builds has no
+  `$ref` of its own.
+- `messageSchema`'s property keys switched from the raw proto field name
+  to `EffectiveJSONName()` — a pre-existing-but-until-now-unnoticed gap:
+  the OpenAPI doc is documenting the actual HTTP JSON contract, and an
+  explicit `json_name` override changes that contract's real key, so the
+  doc has to follow it or it documents a shape the API doesn't serve.
+- Proven end to end against real generated, compiled, and running code —
+  not templates that merely render the expected text: a real HTTP
+  request/response round trip (Gin, `httptest`) showing the masked value
+  over the wire while a direct in-memory-repository read shows the real
+  one, unmutated; a real gRPC round trip (`bufconn`, generated client and
+  server) with the same non-destructive proof; a real `slog.TextHandler`
+  capture showing the redacted value for both the domain struct and a
+  CQRS DTO (value and pointer forms); a real OpenAPI document, built and
+  then validated against the actual vendored meta-schema, carrying the
+  vendor extension.
 
 ## 23. `sgo update` — self-updating the CLI **(planned, Phase 19)**
 

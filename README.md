@@ -232,6 +232,8 @@ extra dependency to add) to override it when convention doesn't fit:
 | `(sgo.repository_query) = true` | RPC | Adds a matching method to the repository port | not added |
 | `(sgo.hide_route) = true` | RPC | Skips HTTP route registration for this RPC | route registered |
 | `(sgo.base_path) = "/v2"` | service | Overrides the default `/api/v1` route prefix | `/api/v1` |
+| `(sgo.obfuscate_visible) = N` | field (`string`) | Masks the value everywhere sgo serializes/logs it: first `N` chars visible, the rest replaced by a fixed-length mask | field shown in full |
+| `(sgo.pii) = true` | field | Flags the field `x-sensitive` in generated OpenAPI docs — documentation only, no masking by itself | not flagged |
 
 ```proto
 syntax = "proto3";
@@ -257,6 +259,10 @@ message User {
   string id = 1;
   string name = 2;
   string email = 3;
+  // Masked in HTTP/gRPC responses and structured logs as "123*****" —
+  // the real value is untouched in the repository and never mutated,
+  // even though HTTP serializes this exact struct instance.
+  string id_number = 4 [(sgo.obfuscate_visible) = 3, (sgo.pii) = true];
 }
 
 message Money {
@@ -270,6 +276,21 @@ Field-level invariants use the real, widely-adopted
 [`buf.build/go/protovalidate`](https://github.com/bufbuild/protovalidate-go)
 (`(buf.validate.field) = {...}`), enforced at the wire↔domain boundary
 — not a second, sgo-specific validation DSL.
+
+`(sgo.obfuscate_visible)` masks non-destructively — the real value in
+the repository is never mutated, even for the HTTP adapter, which
+serializes the exact domain struct instance a repository may still hold
+a pointer to (a generated `MarshalJSON` shadow-struct handles that; the
+gRPC adapter always builds a fresh wire struct per call, so it masks
+directly). The same field also gets a generated `slog.LogValuer`, so it
+stays redacted in structured logs too. A plain `(sgo.pii)` marker, with
+no `obfuscate_visible`, changes nothing about serialization or logging —
+it's classification for the generated OpenAPI doc only. A field's real
+protobuf `[json_name = "..."]` (not an sgo option — standard proto
+syntax) also now overrides its generated JSON key, in the domain struct,
+CQRS DTOs, and the OpenAPI doc alike; unset, a field's JSON key is still
+its raw proto name, unchanged from every prior release. Full design:
+[`ARCHITECTURE.md` §22](ARCHITECTURE.md).
 
 ## 🌐 HTTP routing
 

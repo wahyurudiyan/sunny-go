@@ -138,3 +138,113 @@ var _ = Describe("CQRS classification and generation", func() {
 		Expect(err).NotTo(HaveOccurred(), string(out))
 	})
 })
+
+const sensitiveCQRSProto = `syntax = "proto3";
+
+package order.v1;
+
+import "sgo/options.proto";
+
+option go_package = "demo/contract/gen/order";
+
+service OrderService {
+  rpc CreateOrder(CreateOrderRequest) returns (Order);
+}
+
+message Order {
+  string id = 1;
+}
+message CreateOrderRequest {
+  string name = 1;
+  string card_number = 2 [(sgo.obfuscate_visible) = 4];
+}
+`
+
+var _ = Describe("CQRS generation, sensitive fields (ARCHITECTURE.md §22)", func() {
+	var (
+		root, protoDir, appDir string
+	)
+
+	BeforeEach(func() {
+		var err error
+		root, err = os.MkdirTemp("", "sgo-core-cqrs-sensitive-test-*")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(os.RemoveAll(root)).To(Succeed()) })
+
+		protoDir = filepath.Join(root, "contract", "pb")
+		Expect(os.MkdirAll(protoDir, 0755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(protoDir, "order.proto"), []byte(sensitiveCQRSProto), 0644)).To(Succeed())
+
+		fd, err := sgoproto.Compile(protoDir, "order.proto")
+		Expect(err).NotTo(HaveOccurred())
+		file, err := sgoproto.Build(fd)
+		Expect(err).NotTo(HaveOccurred())
+
+		p := core.Paths{Module: "demo", Entity: "order"}
+		appDir = filepath.Join(root, "internal", "application", "order")
+
+		Expect(core.GenerateCommandsAndQueries(file, fd, p, appDir)).To(Succeed())
+	})
+
+	It("generates a LogValue for the obfuscated request DTO, no MarshalJSON", func() {
+		cmdSrc, err := os.ReadFile(filepath.Join(appDir, "command_gen.go"))
+		Expect(err).NotTo(HaveOccurred())
+		src := string(cmdSrc)
+
+		Expect(src).To(ContainSubstring(`mask "demo/internal/domain/mask"`))
+		Expect(src).To(ContainSubstring("func (a CreateOrderRequest) LogValue() slog.Value"))
+		Expect(src).To(ContainSubstring("mask.Obfuscate(a.CardNumber, 4)"))
+		Expect(src).NotTo(ContainSubstring("func (a CreateOrderRequest) MarshalJSON"))
+	})
+
+	It("redacts the obfuscated field from a real slog line, for both the value and a pointer", func() {
+		modDir := filepath.Join(root, "gobuild-sensitive")
+		Expect(os.MkdirAll(modDir, 0755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(modDir, "go.mod"), []byte("module demo\n\ngo 1.25.0\n"), 0644)).To(Succeed())
+
+		maskDir := filepath.Join(modDir, "internal", "domain", "mask")
+		Expect(os.MkdirAll(maskDir, 0755)).To(Succeed())
+		Expect(core.GenerateMaskKernel(maskDir)).To(Succeed())
+
+		pkgDir := filepath.Join(modDir, "internal", "application", "order")
+		Expect(os.MkdirAll(pkgDir, 0755)).To(Succeed())
+		data, err := os.ReadFile(filepath.Join(appDir, "command_gen.go"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(os.WriteFile(filepath.Join(pkgDir, "command_gen.go"), data, 0644)).To(Succeed())
+
+		mainSrc := `package main
+
+import (
+	"bytes"
+	"log/slog"
+	"strings"
+
+	"demo/internal/application/order"
+)
+
+func main() {
+	req := order.CreateOrderRequest{Name: "widget", CardNumber: "4111111111111111"}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	logger.Info("request (value)", "req", req)
+	logger.Info("request (pointer)", "req", &req)
+
+	logLine := buf.String()
+	if strings.Contains(logLine, "4111111111111111") {
+		panic("real card number leaked into log line: " + logLine)
+	}
+	if strings.Count(logLine, "4111*****") != 2 {
+		panic("expected masked value from both value and pointer forms, got: " + logLine)
+	}
+}
+`
+		Expect(os.WriteFile(filepath.Join(modDir, "main.go"), []byte(mainSrc), 0644)).To(Succeed())
+
+		cmd := exec.Command("go", "run", ".")
+		cmd.Dir = modDir
+		out, err := cmd.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), string(out))
+	})
+})

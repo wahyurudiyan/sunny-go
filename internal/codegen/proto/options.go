@@ -94,6 +94,26 @@ func IsHideRoute(mtd protoreflect.MethodDescriptor) bool {
 	return proto.GetExtension(methodOptions(mtd), sgopb.E_HideRoute).(bool)
 }
 
+// IsPII reports whether fd is explicitly marked
+// `option (sgo.pii) = true;` — classification/documentation only,
+// independent of ObfuscateVisible (ARCHITECTURE.md §22).
+func IsPII(fd protoreflect.FieldDescriptor) bool {
+	return proto.GetExtension(fieldOptions(fd), sgopb.E_Pii).(bool)
+}
+
+// ObfuscateVisible returns fd's `option (sgo.obfuscate_visible) = N;`
+// value and whether it was set at all — proto3 gives int32 fields no
+// way to distinguish an explicit 0 from "unset" on the wire, so
+// presence is reported separately rather than folded into the int
+// return value (ARCHITECTURE.md §22).
+func ObfuscateVisible(fd protoreflect.FieldDescriptor) (visible int32, ok bool) {
+	opts := fieldOptions(fd)
+	if !proto.HasExtension(opts, sgopb.E_ObfuscateVisible) {
+		return 0, false
+	}
+	return proto.GetExtension(opts, sgopb.E_ObfuscateVisible).(int32), true
+}
+
 // FieldConstraints returns fd's protovalidate constraints
 // (`(buf.validate.field) = {...}`), or nil if it has none.
 func FieldConstraints(fd protoreflect.FieldDescriptor) *validatepb.FieldRules {

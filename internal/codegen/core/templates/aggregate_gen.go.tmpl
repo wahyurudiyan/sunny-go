@@ -3,10 +3,60 @@
 package {{.Package}}
 
 import event "{{.EventImportPath}}"
+{{- if .NeedsMasking}}
+import (
+	"encoding/json"
+	"log/slog"
+
+	mask "{{.MaskImportPath}}"
+)
+{{- end}}
+{{define "masking"}}
+{{- if .HasObfuscatedFields}}
+// MarshalJSON masks every (sgo.obfuscate_visible) field before
+// serializing — via a non-mutating shadow struct, so the real value
+// stays intact on the receiver itself (which may still be the exact
+// instance a repository is holding) (ARCHITECTURE.md §22).
+func (a *{{.Name}}) MarshalJSON() ([]byte, error) {
+	type alias {{.Name}}
+	return json.Marshal(&struct {
+		*alias
+{{- range .Fields}}
+{{- if .HasObfuscateVisible}}
+		{{.GoName}} string `json:"{{.EffectiveJSONName}}"`
+{{- end}}
+{{- end}}
+	}{
+		alias: (*alias)(a),
+{{- range .Fields}}
+{{- if .HasObfuscateVisible}}
+		{{.GoName}}: mask.Obfuscate(a.{{.GoName}}, {{.ObfuscateVisible}}),
+{{- end}}
+{{- end}}
+	})
+}
+
+// LogValue redacts every (sgo.obfuscate_visible) field so a. never
+// appears in cleartext in a structured log line (ARCHITECTURE.md §22).
+// A field marked only (sgo.pii), with no obfuscation, is logged as-is —
+// the plain marker carries no masking behavior by design.
+func (a *{{.Name}}) LogValue() slog.Value {
+	return slog.GroupValue(
+{{- range .Fields}}
+{{- if .HasObfuscateVisible}}
+		slog.String("{{.EffectiveJSONName}}", mask.Obfuscate(a.{{.GoName}}, {{.ObfuscateVisible}})),
+{{- else}}
+		slog.Any("{{.EffectiveJSONName}}", a.{{.GoName}}),
+{{- end}}
+{{- end}}
+	)
+}
+{{- end}}
+{{- end}}
 {{range .DomainEvents}}
 type {{.Name}} struct {
 {{- range .Fields}}
-	{{.GoName}} {{.GoType}} `json:"{{.Name}}"`
+	{{.GoName}} {{.GoType}} `json:"{{.EffectiveJSONName}}"`
 {{- end}}
 }
 
@@ -18,25 +68,27 @@ func ({{.Name}}) EventName() string { return "{{.Name}}" }
 // one rather than mutating a field in place.
 type {{.Name}} struct {
 {{- range .Fields}}
-	{{.GoName}} {{.GoType}} `json:"{{.Name}}"`
+	{{.GoName}} {{.GoType}} `json:"{{.EffectiveJSONName}}"`
 {{- end}}
 }
+{{template "masking" .}}
 {{end}}
 {{range .ChildEntities}}
 type {{.Name}} struct {
 {{- range .Fields}}
-	{{.GoName}} {{.GoType}} `json:"{{.Name}}"`
+	{{.GoName}} {{.GoType}} `json:"{{.EffectiveJSONName}}"`
 {{- end}}
 }
+{{template "masking" .}}
 {{end}}
 type {{.Aggregate.Name}} struct {
 {{- range .Aggregate.Fields}}
-	{{.GoName}} {{.GoType}} `json:"{{.Name}}"`
+	{{.GoName}} {{.GoType}} `json:"{{.EffectiveJSONName}}"`
 {{- end}}
 
 	events []event.DomainEvent
 }
-
+{{template "masking" .Aggregate}}
 // PullEvents returns every event recorded since the last call (by an
 // owned {{.Aggregate.Name}} method in aggregate.go) and clears them —
 // call this after successfully persisting, then hand the result to an

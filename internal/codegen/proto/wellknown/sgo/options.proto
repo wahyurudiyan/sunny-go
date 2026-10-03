@@ -77,3 +77,23 @@ extend google.protobuf.ServiceOptions {
   // service that doesn't opt in sees no change.
   string base_path = 50001;
 }
+
+extend google.protobuf.FieldOptions {
+  // obfuscate_visible marks this field as sensitive and masks it
+  // wherever sgo serializes or logs the containing message
+  // (ARCHITECTURE.md §22): the first N characters of the real value
+  // pass through, the rest is replaced with a fixed-length mask (never
+  // proportional to the real length, which would itself leak
+  // information). 0 means fully masked. Unset (proto3's int32 zero
+  // value) is indistinguishable from 0 on the wire, so sgo tracks
+  // presence separately rather than treating "0" as "don't obfuscate" —
+  // only valid on a string-kind field.
+  int32 obfuscate_visible = 50001;
+
+  // pii flags this field as sensitive for documentation/classification
+  // purposes only (surfaced in generated OpenAPI docs, ARCHITECTURE.md
+  // §22). Independent of obfuscate_visible: does not by itself change
+  // serialization or log output. A field can be pii, obfuscated, both,
+  // or neither.
+  bool pii = 50002;
+}

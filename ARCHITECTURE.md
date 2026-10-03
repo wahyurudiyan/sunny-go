@@ -1395,6 +1395,22 @@ binary on their next invocation with no idea why.
   network, proxy down) is reported as a clear error, not retried or
   silently treated as "already up to date."
 
+**As implemented:** the version-resolution, install, and GOBIN-mismatch
+logic all live in a new `internal/selfupdate` package rather than inline
+in `internal/commands/update.go` — the same "logic in a package, thin
+command wrapper" split `openapigen`/`webui` already use, and specifically
+what makes the GOBIN-mismatch comparison (`selfupdate.BinMismatch`)
+testable on its own, independent of whether a real `go install` actually
+succeeded. Semver parsing/comparison uses `golang.org/x/mod/semver` —
+already an indirect dependency (pulled in by `protocompile`), promoted to
+direct rather than hand-rolling comparison logic; it's the same package
+the `go` command itself uses internally for this. Verified live, not
+assumed: `go list -m -versions -json` on sgo's own still-untagged module
+comes back with no `Versions` field at all (confirmed both from inside
+and outside the module's own checkout) — `Versions()` treats that as
+"zero results, no error," exactly the non-failure outcome the v1
+constraint above calls for, not simulated after the fact.
+
 ## Testing strategy
 
 All Go tests — in `sgo` itself and in what it generates — are
